@@ -5,6 +5,7 @@ import type { AnalysisResult } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 import HealthScoreCard from "@/components/HealthScoreCard";
 import ComparisonTable from "@/components/ComparisonTable";
+import FormattedMarkdown from "@/components/FormattedMarkdown";
 
 interface ResultWorkspaceProps {
   result: AnalysisResult;
@@ -36,21 +37,24 @@ export default function ResultWorkspace({ result, onNewQuery }: ResultWorkspaceP
 
       <div className="bg-brand-card border border-brand-border rounded-2xl p-6 shadow-xl">
         <h3 className="text-lg font-bold text-cyan-300 mb-4 flex items-center gap-2">
-          <span>📝</span> Transkrip Lengkap &amp; Catatan Kepatuhan
+          <span>📝</span> Narasi Analisis &amp; Catatan Kepatuhan
         </h3>
-        <p className="text-slate-200 text-sm sm:text-base leading-relaxed whitespace-pre-wrap font-sans">
-          {result.transcript}
-        </p>
+        <FormattedMarkdown content={result.transcript} />
       </div>
 
-      <button
-        onClick={onNewQuery}
-        className="focus-accessible w-full sm:w-auto self-center bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-slate-950 font-bold py-3.5 px-8 rounded-full min-h-12 shadow-lg shadow-cyan-500/30 active:scale-95 transition-all flex items-center justify-center gap-2"
-        type="button"
-      >
-        <span>←</span>
-        <span>Analisis Baru / Kembali ke Dasbor Suara</span>
-      </button>
+      <div className="flex flex-col items-center gap-2 self-center w-full sm:w-auto">
+        <button
+          onClick={onNewQuery}
+          className="focus-accessible w-full sm:w-auto bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-slate-950 font-bold py-3.5 px-8 rounded-full min-h-12 shadow-lg shadow-cyan-500/30 active:scale-95 transition-all flex items-center justify-center gap-2"
+          type="button"
+        >
+          <span>←</span>
+          <span>Analisis Baru / Kembali ke Dasbor Suara</span>
+        </button>
+        <p className="text-center text-xs text-slate-400">
+          Klik tombol di atas atau tekan <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-cyan-300 font-mono text-[11px]">Escape</kbd> untuk kembali ke mikrofon.
+        </p>
+      </div>
     </section>
   );
 }

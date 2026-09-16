@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     SESSION_MAX_TURNS: int = 5
     SESSION_EXPIRY_SECONDS: int = 1800  # 30 minutes
 
+    # Quota Saving / Mock Data (set to True only if explicitly offline testing)
+    USE_MOCK_DATA: bool = False
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

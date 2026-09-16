@@ -12,6 +12,7 @@ services:
     environment:
       - SECTORS_API_KEY=${SECTORS_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - USE_MOCK_DATA=${USE_MOCK_DATA:-true}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

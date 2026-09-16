@@ -1,0 +1,51 @@
+[
+  {
+    "title": "Bank Rakyat Indonesia (BBRI) Perkuat Penyaluran Kredit UMKM dan Transformasi Digital",
+    "body": "PT Bank Rakyat Indonesia (Persero) Tbk (BBRI) terus memperkuat portofolio kredit segmen UMKM dengan rasio pencapaian di atas 80% dari total pembiayaan perseroan, didorong oleh akselerasi platform digital BRImo.",
+    "tags": ["Bullish", "Growth", "Expansion"],
+    "symbols": ["BBRI"],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "title": "Alamtri Resources (ADRO) Bagikan Dividen Interim di Tengah Stabilisasi Harga Batubara Global",
+    "body": "Alamtri Resources Indonesia Tbk (ADRO) mencatatkan arus kas operasional yang solid dengan rasio utang sangat rendah (DER 0.38x), memberikan ruang optimal untuk pembagian dividen berkala kepada pemegang saham.",
+    "tags": ["Bullish", "Dividend", "Outperformance"],
+    "symbols": ["ADRO"],
+    "timestamp": "2026-09-15T09:30:00Z"
+  },
+  {
+    "title": "Bank Central Asia (BBCA) Pertahankan Kualitas Aset Prima dengan NPL Rendah",
+    "body": "PT Bank Central Asia Tbk (BBCA) membukukan efisiensi operasional dengan ROE mencapai 22% dan likuiditas CASA solid, memperkuat posisi teratas perbankan swasta nasional.",
+    "tags": ["Bullish", "Growth", "Outperformance"],
+    "symbols": ["BBCA"],
+    "timestamp": "2026-09-15T08:15:00Z"
+  },
+  {
+    "title": "Telkom Indonesia (TLKM) Genjot Infrastruktur Data Center dan Konektivitas Nasional",
+    "body": "PT Telkom Indonesia Tbk (TLKM) mempercepat ekspansi bisnis fixed mobile convergence (FMC) dan data center hyperscale guna menopang pertumbuhan pendapatan digital jangka panjang.",
+    "tags": ["Growth", "Expansion", "Technical"],
+    "symbols": ["TLKM"],
+    "timestamp": "2026-09-14T14:20:00Z"
+  },
+  {
+    "title": "Astra International (ASII) Bukukan Kinerja Positif di Tengah Kompetisi Kendaraan Listrik",
+    "body": "PT Astra International Tbk (ASII) mempertahankan pangsa pasar otomotif nasional serta memperluas diversifikasi pendapatan di sektor pertambangan dan jasa keuangan.",
+    "tags": ["Bullish", "Dividend", "Expansion"],
+    "symbols": ["ASII"],
+    "timestamp": "2026-09-14T11:00:00Z"
+  },
+  {
+    "title": "Indofood CBP (ICBP) Catat Pertumbuhan Volume Penjualan Ekspor Produk Mi Instan",
+    "body": "PT Indofood CBP Sukses Makmur Tbk (ICBP) membukukan penguatan margin laba operasional didorong stabilnya harga bahan baku gandum dan penetrasi pasar Timur Tengah dan Afrika.",
+    "tags": ["Bullish", "Growth", "Expansion"],
+    "symbols": ["ICBP"],
+    "timestamp": "2026-09-13T16:00:00Z"
+  },
+  {
+    "title": "IHSG Fluktuatif Dipengaruhi Sentimen Suku Bunga Global dan Arus Modal Asing",
+    "body": "Indeks Harga Saham Gabungan (IHSG) bergerak konsolidasi dengan volatilitas wajar di tengah penyesuaian ekspektasi suku bunga bank sentral global.",
+    "tags": ["Neutral", "Technical"],
+    "symbols": ["BBRI", "BBCA", "BMRI", "TLKM", "ADRO", "ASII"],
+    "timestamp": "2026-09-13T10:00:00Z"
+  }
+]

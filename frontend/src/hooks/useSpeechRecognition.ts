@@ -48,6 +48,12 @@ export interface UseSpeechRecognitionOptions {
   interimResults?: boolean;
   /** Automatically restart on silence/disconnect (wake-word listening mode) */
   autoRestart?: boolean;
+  /**
+   * Minimum confidence [0-1] for a final result to be accepted.
+   * Results below this threshold (mumbling, noise) are silently discarded.
+   * Defaults to 0.60. Set to 0 to disable filtering.
+   */
+  confidenceThreshold?: number;
   /** Called with the final transcript when recognition ends */
   onResult?: (transcript: string) => void;
   /** Called with interim transcript for live display */
@@ -81,6 +87,7 @@ export function useSpeechRecognition(
     continuous = true,
     interimResults = true,
     autoRestart = false,
+    confidenceThreshold = 0.60,
     onResult,
     onInterim,
   } = options;
@@ -124,7 +131,15 @@ export function useSpeechRecognition(
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         if (result.isFinal) {
-          finalTranscript += result[0].transcript;
+          const confidence = result[0].confidence ?? 1; // default 1 if browser omits it
+          if (confidence >= confidenceThreshold) {
+            finalTranscript += result[0].transcript;
+          } else {
+            // Quietly discard low-confidence result (noise / mumbling)
+            console.debug(
+              `[STT] Discarded low-confidence result (${(confidence * 100).toFixed(0)}%): "${result[0].transcript}"`
+            );
+          }
         } else {
           interimTranscript += result[0].transcript;
         }
@@ -177,7 +192,7 @@ export function useSpeechRecognition(
       shouldKeepListeningRef.current = false;
       recognition.abort();
     };
-  }, [lang, continuous, interimResults, autoRestart]);
+  }, [lang, continuous, interimResults, autoRestart, confidenceThreshold]);
 
   const startListening = useCallback(() => {
     if (!recognitionRef.current) return;

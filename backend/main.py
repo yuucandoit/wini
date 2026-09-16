@@ -60,36 +60,45 @@ COMPANY_NAME_TO_TICKER: dict[str, str] = {
     "perusahaan gas": "PGAS",
 }
 
-# 4-letter words to ignore when scanning text for tickers
+# Words to ignore when scanning text for tickers (Indonesian common words & commands)
 COMMON_STOPWORDS_4 = {
     "YANG", "PADA", "DARI", "ATAU", "BANK", "SKOR", "LABA", "ATAS", "SAJA",
     "JUGA", "KITA", "BISA", "AKAN", "BAGI", "KAMI", "SAMA", "BILA", "AGAR",
     "OLEH", "LALU", "CARA", "LIMA", "ENAM", "SATU", "DUA", "INFO", "DATA",
     "NEWS", "APAK", "MANA", "RUGI", "AI", "VS", "DAN", "BAIK", "APAP", "DENG",
-    "POST", "TEST", "NEXT", "HALO", "NAMA", "MAKA", "SAAT", "HARI", "BULAN"
+    "POST", "TEST", "NEXT", "HALO", "NAMA", "MAKA", "SAAT", "HARI", "BULAN",
+    "COBA", "CARI", "LIAT", "BAGU", "BUAT", "MAUK", "TENT", "DULU", "SAYA",
+    "KAMU", "APAS", "IKUT", "NAIK", "TURU", "JUAL", "BELI", "KATA", "KODE",
+    "TOP5", "TOP3", "TOP7", "TOP8", "TOP9", "TOP1", "TOP0", "EMIT", "KALI",
+    "CEK", "PILI", "SEDE", "SUDA", "BIAR", "TAPI", "JIKA", "TERB", "SEHA",
+    "MENG", "SIAP", "DAPA", "TIDA", "BANY", "ADAL", "BEBE", "DEPA", "JADI"
 }
 
 
 def extract_tickers_from_text(text: str) -> list[str]:
-    """Extract IDX ticker symbols from natural language query."""
+    """Extract IDX ticker symbols dynamically from natural language query.
+
+    IDX tickers are 4-letter symbols (e.g. BBCA, TLKM, DCII, BYAN, MEDC).
+    Extracts any 4-letter token not belonging to common Indonesian stopwords,
+    without requiring any hardcoded stock lists.
+    """
     import re
     lower_text = text.lower()
     found: list[str] = []
 
-    # 1. Check known company aliases
+    # 1. Check known company aliases (e.g. "telkom" -> TLKM, "bca" -> BBCA, "adaro" -> ADRO)
     for name, sym in COMPANY_NAME_TO_TICKER.items():
         if re.search(r"\b" + re.escape(name) + r"\b", lower_text):
             if sym not in found:
                 found.append(sym)
 
-    # 2. Check uppercase 4-letter words (e.g. TLKM, BBCA, ISAT)
+    # 2. Check 4-letter words dynamically
     tokens = re.findall(r"\b[A-Za-z]{4}\b", text)
     for t in tokens:
         up = t.upper()
         if up not in COMMON_STOPWORDS_4 and up not in found:
-            # Prefer tokens that were originally uppercase, or if no tickers found yet
-            if t.isupper() or len(found) == 0:
-                found.append(up)
+            # If word was uppercase or no aliases found yet, accept as ticker candidate
+            found.append(up)
 
     return found
 
@@ -222,12 +231,39 @@ async def health_check():
     }
 
 
+DISCOVERY_KEYWORDS = {
+    "top", "bagus", "terbaik", "sehat", "rekomendasi", "menarik",
+    "screener", "saring", "pilihan", "unggul", "beli", "investasi"
+}
+
+
+def is_discovery_query(text: str) -> bool:
+    """Check if query is asking for stock discovery / recommendations."""
+    lower = text.lower()
+    return any(kw in lower for kw in DISCOVERY_KEYWORDS)
+
+
+def extract_requested_limit(text: str, default: int = 5) -> int:
+    """Extract requested number of stocks (e.g. 'top 5' -> 5)."""
+    import re
+    m = re.search(r"\btop\s*(\d+)\b", text.lower())
+    if m:
+        try:
+            val = int(m.group(1))
+            return max(1, min(val, 10))
+        except ValueError:
+            pass
+    return default
+
+
 @app.post("/api/analyze", response_model=AnalyzeResponse)
 async def analyze_endpoint(request: AnalyzeRequest):
     """Run comparative financial analysis on IDX-listed companies.
 
     Accepts one or more ticker symbols and a natural language query.
     If tickers are omitted, extracts ticker symbols automatically from the query.
+    If no tickers are found but discovery intent is detected (e.g. "top 5 saham bagus"),
+    screens the healthiest stocks automatically.
     Returns health scores, news sentiment, and an AI-generated narrative.
     """
     effective_query = (request.user_query or request.query or "").strip()
@@ -239,12 +275,21 @@ async def analyze_endpoint(request: AnalyzeRequest):
     if not tickers:
         tickers = extract_tickers_from_text(effective_query)
 
+    # Auto-screener for discovery queries (e.g. "top 5 saham yang sedang bagus")
+    if not tickers and is_discovery_query(effective_query):
+        limit = extract_requested_limit(effective_query, default=5)
+        logger.info(f"Discovery query detected: '{effective_query}', auto-screening top {limit} stocks...")
+        from backend.services.sectors_service import screen_top_healthy_companies
+        screened = await screen_top_healthy_companies(limit=limit)
+        tickers = [c.get("symbol", "").replace(".JK", "") for c in screened if c.get("symbol")]
+
     if not tickers:
         raise HTTPException(
             status_code=400,
             detail=(
                 "Tidak dapat mendeteksi kode saham dalam pertanyaan. "
-                "Sertakan kode saham atau nama emiten (contoh: 'analisis BBCA' atau 'bandingkan TLKM dan ISAT')."
+                "Sertakan kode saham atau nama emiten (contoh: 'analisis BBCA' atau 'bandingkan TLKM dan ISAT'), "
+                "atau gunakan perintah rekomendasi seperti 'analisis top 5 saham yang sedang bagus'."
             ),
         )
 

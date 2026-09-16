@@ -1,54 +1,35 @@
-"""Sectors Financial API service — optimized single-endpoint data fetcher.
+"""Sectors Financial API service — optimized company data fetcher.
 
-Uses the Companies Screener (GET /v2/companies/) with structured `where`
-and `order_by` parameters to fetch all fundamental data in a single call
-at 1 API credit cost.
+Supports both:
+1. Local Mock Fixtures (USE_MOCK_DATA=True) to conserve Sectors API quota (500 credits limit).
+2. Live Sectors API v2 with Company Report & Screener endpoints and caching.
 
-Docs: https://docs.sectors.app/api-references/v2/indonesia/screener/companies
+Docs: https://docs.sectors.app/
 """
 
 from __future__ import annotations
 
-import httpx
+import asyncio
+import json
 import logging
+from pathlib import Path
 from typing import Any
+
+import httpx
 
 from backend.config import get_settings
 from backend.cache import get_cache
 
 logger = logging.getLogger(__name__)
 
-# Metrics we always request via include_query_values
-FUNDAMENTAL_FIELDS = [
-    "der_mrq",
-    "roe_ttm",
-    "roa_ttm",
-    "dar_mrq",
-    "pe_ttm",
-    "pb_mrq",
-    "ps_ttm",
-    "market_cap",
-    "last_close_price",
-    "company_name",
-    "sector",
-    "sub_sector",
-    "indices",
-    "tags",
-    "yield_ttm",
-    "total_assets_mrq",
-    "total_equity_mrq",
-    "total_revenue_mrq",
-    "earnings_mrq",
-    "total_liabilities_mrq",
-    "yoy_quarter_revenue_growth",
-    "yoy_quarter_earnings_growth",
-]
+# Directory where local JSON fixtures are stored
+FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 
 # Maximum retry attempts for transient failures
 MAX_RETRIES = 2
 
 # HTTP timeout in seconds
-REQUEST_TIMEOUT = 30.0
+REQUEST_TIMEOUT = 25.0
 
 
 def _normalize_ticker(ticker: str) -> str:
@@ -59,14 +40,114 @@ def _normalize_ticker(ticker: str) -> str:
     return t
 
 
-def _build_where_clause(tickers: list[str]) -> str:
-    """Build a SQL-like WHERE clause for the screener.
+def _load_mock_companies() -> list[dict[str, Any]]:
+    """Load local company fixtures from JSON file."""
+    fixture_path = FIXTURES_DIR / "companies_fixture.json"
+    if fixture_path.exists():
+        try:
+            with open(fixture_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load companies fixture: {e}")
+    return []
 
-    Example: symbol in ['TLKM','ISAT']
-    """
-    normalized = [_normalize_ticker(t) for t in tickers]
-    symbols_str = ",".join(f"'{s}'" for s in normalized)
-    return f"symbol in [{symbols_str}]"
+
+def _format_report_to_company_dict(report_data: dict[str, Any]) -> dict[str, Any]:
+    """Convert Sectors /v2/company/report/{symbol}/ response into company dict."""
+    symbol = report_data.get("symbol", "")
+    ov = report_data.get("overview", {}) or {}
+    val = report_data.get("valuation", {}) or {}
+    fin = report_data.get("financials", {}) or {}
+
+    ratios = fin.get("historical_financial_ratio", []) or []
+    latest_ratio = ratios[-1] if ratios else {}
+
+    h_val = val.get("historical_valuation", []) or []
+    pe = None
+    pb = None
+    for v in reversed(h_val):
+        if pe is None and v.get("pe") is not None:
+            pe = float(v["pe"])
+        if pb is None and v.get("pb") is not None:
+            pb = float(v["pb"])
+        if pe is not None and pb is not None:
+            break
+
+    der = latest_ratio.get("leverage", {}).get("debt_to_equity_ratio")
+    dar = latest_ratio.get("leverage", {}).get("debt_to_asset_ratio")
+    roe = latest_ratio.get("profitability", {}).get("roe")
+    roa = latest_ratio.get("profitability", {}).get("roa")
+
+    company_name = report_data.get("company_name") or ov.get("company_name") or f"PT {symbol} Tbk"
+
+    metrics = {
+        "der_mrq": float(der) if der is not None else None,
+        "dar_mrq": float(dar) if dar is not None else None,
+        "roe_ttm": float(roe) if roe is not None else None,
+        "roa_ttm": float(roa) if roa is not None else None,
+        "pe_ttm": pe,
+        "pb_mrq": pb,
+        "market_cap": ov.get("market_cap"),
+        "last_close_price": ov.get("last_close_price"),
+    }
+
+    return {
+        "symbol": f"{symbol}.JK" if not symbol.endswith(".JK") else symbol,
+        "company_name": company_name,
+        "sector": ov.get("sector", ""),
+        "sub_sector": ov.get("sub_sector", ""),
+        "tags": ov.get("tags", []),
+        "indices": ov.get("indices", []),
+        "yield_ttm": (report_data.get("dividend") or {}).get("yield_ttm"),
+        "yoy_quarter_revenue_growth": fin.get("yoy_quarter_revenue_growth"),
+        "yoy_quarter_earnings_growth": fin.get("yoy_quarter_earnings_growth"),
+        **metrics,
+        "query_values": metrics,
+    }
+
+
+async def fetch_company_report(symbol: str) -> dict[str, Any] | None:
+    """Fetch company full report from Sectors API (/v2/company/report/{symbol}/)."""
+    clean_sym = _normalize_ticker(symbol)
+    cache = get_cache()
+    cache_key = f"report:{clean_sym}"
+
+    cached = await cache.get("financial", cache_key)
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    url = f"{settings.SECTORS_BASE_URL}/v2/company/report/{clean_sym}/"
+    headers = {
+        "Authorization": settings.SECTORS_API_KEY,
+        "Accept": "application/json",
+    }
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    formatted = _format_report_to_company_dict(data)
+                    await cache.set("financial", cache_key, formatted)
+                    return formatted
+                elif resp.status_code == 429:
+                    stale = await cache.get_stale("financial", cache_key)
+                    if stale is not None:
+                        return stale
+                    logger.warning(f"Rate limited (429) on report for {clean_sym}")
+                    break
+                else:
+                    logger.warning(f"Report HTTP {resp.status_code} for {clean_sym}")
+                    break
+        except Exception as e:
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(2 ** attempt)
+            else:
+                logger.error(f"Failed to fetch report for {clean_sym}: {e}")
+
+    return None
 
 
 async def fetch_company_fundamentals(
@@ -74,152 +155,144 @@ async def fetch_company_fundamentals(
 ) -> list[dict[str, Any]]:
     """Fetch fundamental data for one or more IDX tickers.
 
-    Uses the Companies Screener endpoint with structured parameters
-    (1 API credit per call).
-
-    Args:
-        tickers: List of IDX ticker symbols (e.g. ["TLKM", "ISAT"]).
-
-    Returns:
-        List of company data dicts from the screener results.
-
-    Raises:
-        httpx.HTTPStatusError: On non-retryable HTTP errors.
-        ValueError: If tickers list is empty.
+    Priority:
+    1. In-memory cache
+    2. Mock fixtures if USE_MOCK_DATA=True (0 API credits used)
+    3. Sectors API Report endpoint per ticker (with fallback to fixtures on error)
     """
     if not tickers:
         raise ValueError("At least one ticker is required")
 
+    settings = get_settings()
     cache = get_cache()
-    cache_key = ",".join(sorted(_normalize_ticker(t) for t in tickers))
+    normalized_list = [_normalize_ticker(t) for t in tickers]
+    cache_key = ",".join(sorted(normalized_list))
 
-    # Check cache first
+    # 1. Check cache first
     cached = await cache.get("financial", cache_key)
     if cached is not None:
-        logger.info(f"Returning cached data for {cache_key}")
+        logger.info(f"Returning cached fundamental data for {cache_key}")
         return cached
 
-    settings = get_settings()
-    where_clause = _build_where_clause(tickers)
+    # 2. Check Mock Data Mode (Quota Saving)
+    if settings.USE_MOCK_DATA:
+        logger.info(f"USE_MOCK_DATA=True: Loading {tickers} from local fixtures (0 tokens/credits consumed)")
+        mock_companies = _load_mock_companies()
+        matched = []
+        for sym in normalized_list:
+            found = False
+            for item in mock_companies:
+                if _normalize_ticker(item.get("symbol", "")) == sym:
+                    matched.append(item)
+                    found = True
+                    break
+            if not found:
+                logger.warning(f"Ticker {sym} not found in mock fixtures")
 
+        if matched:
+            await cache.set("financial", cache_key, matched)
+            return matched
+
+    # 3. Live API Fetching (Parallel fetch per ticker for highest accuracy)
+    results: list[dict[str, Any]] = []
+    tasks = [fetch_company_report(sym) for sym in normalized_list]
+    reports = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for sym, rep in zip(normalized_list, reports):
+        if isinstance(rep, dict) and rep:
+            results.append(rep)
+        else:
+            logger.warning(f"Live report unavailable for {sym}, checking mock fallback")
+            # Fallback to mock fixture if available
+            mock_companies = _load_mock_companies()
+            for item in mock_companies:
+                if _normalize_ticker(item.get("symbol", "")) == sym:
+                    results.append(item)
+                    break
+
+    if results:
+        await cache.set("financial", cache_key, results)
+
+    return results
+
+
+async def screen_top_healthy_companies(limit: int = 5) -> list[dict[str, Any]]:
+    """Screen for the healthiest top companies in IDX.
+
+    Sorts by financial health fundamentals: solid ROE, manageable DER debt,
+    and high market capitalization.
+    """
+    settings = get_settings()
+    cache = get_cache()
+    bounded_limit = max(1, min(limit, 10))
+    cache_key = f"screener:top_healthy:{bounded_limit}"
+
+    cached = await cache.get("financial", cache_key)
+    if cached is not None:
+        return cached
+
+    # 1. Mock Data / Quota Saving Mode
+    if settings.USE_MOCK_DATA:
+        logger.info(f"USE_MOCK_DATA=True: Screening top {bounded_limit} stocks from fixtures")
+        mock_companies = _load_mock_companies()
+
+        def _sort_score(c: dict[str, Any]) -> tuple[float, float]:
+            qv = c.get("query_values") or {}
+            roe = float(qv.get("roe_ttm") or c.get("roe_ttm") or 0.0)
+            der = float(qv.get("der_mrq") or c.get("der_mrq") or 99.0)
+            mcap = float(qv.get("market_cap") or c.get("market_cap") or 0.0)
+            # Prefer companies with ROE > 10% and healthy balance sheet
+            health_bonus = 100.0 if (roe >= 0.10 and der <= 5.5) else 0.0
+            return (health_bonus + roe * 100, mcap)
+
+        sorted_comps = sorted(mock_companies, key=_sort_score, reverse=True)
+        top = sorted_comps[:bounded_limit]
+        await cache.set("financial", cache_key, top)
+        return top
+
+    # 2. Live Screener API
+    url = f"{settings.SECTORS_BASE_URL}/v2/companies/"
     params = {
-        "where": where_clause,
-        "order_by": "symbol",
-        "limit": 200,
+        "where": "roe_ttm > 0.10 and der_mrq < 2.0 and market_cap > 10000000000000",
+        "order_by": "-market_cap",
+        "limit": bounded_limit,
         "include_query_values": "true",
     }
-
     headers = {
         "Authorization": settings.SECTORS_API_KEY,
         "Accept": "application/json",
     }
 
-    url = f"{settings.SECTORS_BASE_URL}/v2/companies/"
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.get(url, params=params, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                results = data.get("results", [])
+                if results:
+                    enriched = []
+                    for item in results:
+                        sym = item.get("symbol", "")
+                        report = await fetch_company_report(sym)
+                        enriched.append(report if report else item)
+                    if enriched:
+                        await cache.set("financial", cache_key, enriched)
+                        return enriched
+    except Exception as e:
+        logger.error(f"Live screener API failed: {e}")
 
-    last_error: Exception | None = None
-
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-                response = await client.get(url, params=params, headers=headers)
-
-                if response.status_code == 429:
-                    # Rate limited — try stale cache
-                    logger.warning("Sectors API rate limit hit (429)")
-                    stale = await cache.get_stale("financial", cache_key)
-                    if stale is not None:
-                        return stale
-                    raise httpx.HTTPStatusError(
-                        "Rate limit exceeded",
-                        request=response.request,
-                        response=response,
-                    )
-
-                response.raise_for_status()
-                data = response.json()
-
-            results = data.get("results", [])
-            logger.info(
-                f"Fetched {len(results)} companies for tickers: "
-                f"{[_normalize_ticker(t) for t in tickers]}"
-            )
-
-            # Cache the results
-            await cache.set("financial", cache_key, results)
-            return results
-
-        except httpx.HTTPStatusError as e:
-            last_error = e
-            status = e.response.status_code
-
-            if status == 400:
-                # Bad request — don't retry, raise immediately
-                error_body = e.response.text
-                logger.error(f"Sectors API bad request: {error_body}")
-                raise ValueError(
-                    f"Invalid query to Sectors API: {error_body}"
-                ) from e
-
-            if status in (401, 403):
-                logger.error("Sectors API authentication failed")
-                raise
-
-            # For 5xx and other errors, retry
-            if attempt < MAX_RETRIES:
-                wait = 2 ** attempt
-                logger.warning(
-                    f"Sectors API error {status}, retrying in {wait}s "
-                    f"(attempt {attempt + 1}/{MAX_RETRIES})"
-                )
-                import asyncio
-                await asyncio.sleep(wait)
-            else:
-                # All retries exhausted — try stale cache
-                stale = await cache.get_stale("financial", cache_key)
-                if stale is not None:
-                    logger.warning("Using stale cache after retries exhausted")
-                    return stale
-                raise
-
-        except httpx.TimeoutException:
-            last_error = httpx.TimeoutException("Request timed out")
-            if attempt < MAX_RETRIES:
-                wait = 2 ** attempt
-                logger.warning(
-                    f"Sectors API timeout, retrying in {wait}s "
-                    f"(attempt {attempt + 1}/{MAX_RETRIES})"
-                )
-                import asyncio
-                await asyncio.sleep(wait)
-            else:
-                stale = await cache.get_stale("financial", cache_key)
-                if stale is not None:
-                    logger.warning("Using stale cache after timeout retries")
-                    return stale
-                raise
-
-    # Should not reach here, but just in case
-    if last_error:
-        raise last_error
-    return []
+    # Fallback to local mock
+    mock_companies = _load_mock_companies()
+    fallback_top = mock_companies[:bounded_limit]
+    return fallback_top
 
 
 def extract_metrics(company_data: dict[str, Any]) -> dict[str, float | None]:
     """Extract scoring-relevant metrics from a company data dict.
 
-    The screener returns metrics in `query_values` when
-    `include_query_values=true` is set, or as top-level fields.
-
-    Args:
-        company_data: A single company result from the screener.
-
-    Returns:
-        Dict with metric names as keys and float values (or None).
+    Supports both screener query_values and direct formatted report keys.
     """
-    # query_values contains the field values we requested
     qv = company_data.get("query_values") or {}
-
-    # Merge top-level and query_values, preferring query_values
     merged = {**company_data, **qv}
 
     metrics = {}
@@ -237,19 +310,12 @@ def extract_metrics(company_data: dict[str, Any]) -> dict[str, float | None]:
 
 
 def extract_company_info(company_data: dict[str, Any]) -> dict[str, Any]:
-    """Extract display-friendly company information.
-
-    Args:
-        company_data: A single company result from the screener.
-
-    Returns:
-        Dict with company metadata for display/narrative.
-    """
+    """Extract display-friendly company information."""
     qv = company_data.get("query_values") or {}
     merged = {**company_data, **qv}
 
     return {
-        "symbol": company_data.get("symbol", ""),
+        "symbol": company_data.get("symbol", "").replace(".JK", ""),
         "company_name": company_data.get("company_name", ""),
         "sector": merged.get("sector", ""),
         "sub_sector": merged.get("sub_sector", ""),

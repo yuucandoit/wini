@@ -5,6 +5,7 @@ import type { AnalysisResult } from "@/lib/types";
 import { analyzeStock } from "@/lib/api";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { useAudioSpectrum } from "@/hooks/useAudioSpectrum";
 
 import WelcomeBanner from "@/components/WelcomeBanner";
 import ResultWorkspace from "@/components/ResultWorkspace";
@@ -17,7 +18,7 @@ const MIC_ACTIVE_ANNOUNCEMENT =
 
 const QUICK_PROMPTS = [
   { label: "📊 Bandingkan TLKM vs ISAT", query: "Bandingkan fundamental saham TLKM dan ISAT" },
-  { label: "💰 Skor Dividen BBCA", query: "Analisis kesehatan finansial dan dividen BBCA" },
+  { label: "💰 Top 5 Saham Sehat", query: "Tampilkan top 5 saham paling sehat di BEI" },
   { label: "📈 Cek Valuasi ASII", query: "Cek valuasi dan kesehatan saham ASII" },
   { label: "🔍 Saham Murah PER < 10", query: "Cari saham murah dengan PER di bawah 10" },
 ];
@@ -90,9 +91,13 @@ export default function WiniWorkspace() {
     continuous: true,
     interimResults: true,
     autoRestart: false,
+    confidenceThreshold: 0.60,
     onResult: handleFinalSpeech,
     onInterim: handleInterimSpeech,
   });
+
+  // Real-time microphone spectrum analyser (8 bars)
+  const { barHeights, startSpectrum, stopSpectrum } = useAudioSpectrum({ bars: 8 });
 
   // Initial greeting audio playback
   const triggerGreeting = useCallback(() => {
@@ -122,23 +127,37 @@ export default function WiniWorkspace() {
     resetTranscript();
     setTimeout(() => {
       startListening();
+      startSpectrum(); // Start real-time spectrum capture
     }, 1200);
-  }, [cancelSpeech, playChime, resetTranscript, speak, startListening]);
+  }, [cancelSpeech, playChime, resetTranscript, speak, startListening, startSpectrum]);
 
   // Deactivate microphone
   const deactivateMicrophone = useCallback(() => {
     cancelSpeech();
     playChime("stop");
     stopListening();
+    stopSpectrum(); // Release mic from spectrum analyser too
     setIsMicActive(false);
     setCaptionText("Mikrofon dinonaktifkan. Pencet tombol apa saja 2x atau klik 2x untuk membuka mic.");
-  }, [cancelSpeech, playChime, stopListening]);
+  }, [cancelSpeech, playChime, stopListening, stopSpectrum]);
 
   // Transition from greeting screen to active dashboard
   const handleActivateFromGreeting = useCallback(() => {
     setPhase("dashboard");
     activateMicrophone();
   }, [activateMicrophone]);
+
+  const handleResetToDashboard = useCallback(() => {
+    cancelSpeech();
+    stopListening();
+    stopSpectrum();
+    setIsMicActive(false);
+    setPhase("dashboard");
+    setError(null);
+    setResult(null);
+    setTextInput("");
+    setCaptionText("Pencet tombol apa saja 2x atau klik 2x untuk membuka mikrofon.");
+  }, [cancelSpeech, stopListening, stopSpectrum]);
 
   // Global double-keypress (ANY key) and double-click listener
   useEffect(() => {
@@ -152,21 +171,31 @@ export default function WiniWorkspace() {
         } else {
           activateMicrophone();
         }
-      } else if (currentP === "results") {
-        setPhase("dashboard");
-        setTimeout(() => {
-          activateMicrophone();
-        }, 300);
       }
+      // On 'results' or 'processing': NEVER auto-close or jump to mic on accidental double clicks
     };
 
-    // 1. Any key pressed twice within 750ms
+    // 1. Any key pressed twice within 750ms (for greeting & dashboard)
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't intercept if user is typing inside text input
       if (
         document.activeElement?.tagName === "INPUT" ||
         document.activeElement?.tagName === "TEXTAREA"
       ) {
+        return;
+      }
+
+      // On results page: Escape key allows returning to dashboard deliberately
+      if (phaseRef.current === "results") {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          handleResetToDashboard();
+        }
+        return;
+      }
+
+      // On processing: do not trigger anything
+      if (phaseRef.current === "processing") {
         return;
       }
 
@@ -183,8 +212,13 @@ export default function WiniWorkspace() {
       }
     };
 
-    // 2. Click or tap twice anywhere within 450ms
+    // 2. Click or tap twice anywhere (for greeting & dashboard)
     const handlePointerUp = (e: MouseEvent | TouchEvent) => {
+      // Protect results and processing pages from accidental dismissals
+      if (phaseRef.current === "results" || phaseRef.current === "processing") {
+        return;
+      }
+
       const target = e.target as HTMLElement | null;
       if (
         target?.tagName === "INPUT" ||
@@ -209,6 +243,11 @@ export default function WiniWorkspace() {
     };
 
     const handleDblClick = (e: MouseEvent) => {
+      // Protect results and processing pages from accidental dismissals
+      if (phaseRef.current === "results" || phaseRef.current === "processing") {
+        return;
+      }
+
       const target = e.target as HTMLElement | null;
       if (
         target?.tagName === "INPUT" ||
@@ -234,7 +273,7 @@ export default function WiniWorkspace() {
       window.removeEventListener("touchend", handlePointerUp);
       window.removeEventListener("dblclick", handleDblClick);
     };
-  }, [handleActivateFromGreeting, activateMicrophone, deactivateMicrophone]);
+  }, [handleActivateFromGreeting, activateMicrophone, deactivateMicrophone, handleResetToDashboard]);
 
   // Submit query for analysis
   const handleSubmitQuery = async (queryToAnalyze: string) => {
@@ -243,7 +282,11 @@ export default function WiniWorkspace() {
 
     cancelSpeech();
     stopListening();
+    stopSpectrum();
     setIsMicActive(false);
+
+    lastKeyTimeRef.current = 0;
+    lastPointerTimeRef.current = 0;
 
     setCurrentQuery(cleanQuery);
     setPhase("processing");
@@ -254,6 +297,8 @@ export default function WiniWorkspace() {
       const analysisData = await analyzeStock(cleanQuery);
       playChime("success");
       setResult(analysisData);
+      lastKeyTimeRef.current = 0;
+      lastPointerTimeRef.current = 0;
       setPhase("results");
 
       // Announce result narrative with natural speech
@@ -278,17 +323,6 @@ export default function WiniWorkspace() {
     setResult(null);
     setTextInput("");
     triggerGreeting();
-  };
-
-  const handleResetToDashboard = () => {
-    cancelSpeech();
-    stopListening();
-    setIsMicActive(false);
-    setPhase("dashboard");
-    setError(null);
-    setResult(null);
-    setTextInput("");
-    setCaptionText("Pencet tombol apa saja 2x atau klik 2x untuk membuka mikrofon.");
   };
 
   return (
@@ -544,54 +578,35 @@ export default function WiniWorkspace() {
                   className="flex items-center justify-center gap-1.5 h-10 w-full max-w-xs"
                   title="Spektrum Suara Masukan"
                 >
-                  <span
-                    className={`w-1.5 rounded-full ${
-                      isMicActive || isSpeaking ? "bg-emerald-400 animate-wave" : "bg-cyan-800 h-2"
-                    }`}
-                    style={{ animationDelay: "0.1s" }}
-                  ></span>
-                  <span
-                    className={`w-1.5 rounded-full ${
-                      isMicActive || isSpeaking ? "bg-emerald-400 animate-wave" : "bg-cyan-800 h-3"
-                    }`}
-                    style={{ animationDelay: "0.25s" }}
-                  ></span>
-                  <span
-                    className={`w-1.5 rounded-full ${
-                      isMicActive || isSpeaking ? "bg-emerald-300 animate-wave" : "bg-cyan-700 h-4"
-                    }`}
-                    style={{ animationDelay: "0.4s" }}
-                  ></span>
-                  <span
-                    className={`w-1.5 rounded-full ${
-                      isMicActive || isSpeaking ? "bg-emerald-500 animate-wave" : "bg-cyan-800 h-2"
-                    }`}
-                    style={{ animationDelay: "0.15s" }}
-                  ></span>
-                  <span
-                    className={`w-1.5 rounded-full ${
-                      isMicActive || isSpeaking ? "bg-emerald-400 animate-wave" : "bg-cyan-700 h-5"
-                    }`}
-                    style={{ animationDelay: "0.3s" }}
-                  ></span>
-                  <span
-                    className={`w-1.5 rounded-full ${
-                      isMicActive || isSpeaking ? "bg-emerald-300 animate-wave" : "bg-cyan-800 h-3"
-                    }`}
-                    style={{ animationDelay: "0.5s" }}
-                  ></span>
-                  <span
-                    className={`w-1.5 rounded-full ${
-                      isMicActive || isSpeaking ? "bg-emerald-400 animate-wave" : "bg-cyan-700 h-4"
-                    }`}
-                    style={{ animationDelay: "0.2s" }}
-                  ></span>
-                  <span
-                    className={`w-1.5 rounded-full ${
-                      isMicActive || isSpeaking ? "bg-emerald-500 animate-wave" : "bg-cyan-800 h-2"
-                    }`}
-                    style={{ animationDelay: "0.35s" }}
-                  ></span>
+                {/* Real-time amplitude bars driven by useAudioSpectrum */}
+                {barHeights.map((h, i) => {
+                  // When mic is active: use real amplitude (min 4px to stay visible)
+                  // When idle / TTS speaking: gentle pulse CSS fallback
+                  const MIN_PX = 4;
+                  const MAX_PX = 40; // h-10 container = 40px
+                  const heightPx = isMicActive
+                    ? Math.max(MIN_PX, Math.round(h * MAX_PX))
+                    : MAX_PX * 0.15; // ~6px idle
+
+                  return (
+                    <span
+                      key={i}
+                      aria-hidden="true"
+                      className={`w-1.5 rounded-full transition-all duration-75 ${
+                        isMicActive
+                          ? h > 0.5
+                            ? "bg-emerald-300"
+                            : h > 0.2
+                            ? "bg-emerald-400"
+                            : "bg-emerald-600"
+                          : isSpeaking
+                          ? "bg-amber-400 animate-pulse"
+                          : "bg-cyan-800"
+                      }`}
+                      style={{ height: `${heightPx}px` }}
+                    />
+                  );
+                })}
                 </div>
 
                 {/* Dual Sensory Feature Pills */}
@@ -638,7 +653,7 @@ export default function WiniWorkspace() {
                   className="focus-accessible w-full h-14 pl-4 pr-12 rounded-xl bg-brand-card/90 border-2 border-slate-700 text-slate-100 placeholder-slate-400 text-sm sm:text-base focus:border-cyan-400 focus:bg-slate-900/90 transition shadow-inner"
                   id="stock-query-input"
                   name="query"
-                  placeholder="Ketik kode saham atau pertanyaan Anda di sini... (contoh: Analisis kesehatan fundamental BBCA)"
+                  placeholder="Ketik kode saham atau pertanyaan Anda di sini... (contoh: Analisis top 5 saham sehat BEI)"
                   type="text"
                 />
                 <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none hidden sm:inline-block text-xs font-mono border border-slate-700 px-1.5 py-0.5 rounded">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { cleanTextForSpeech } from "@/lib/speechUtils";
 
 export interface UseSpeechSynthesisOptions {
   /** BCP-47 language tag. Defaults to "id-ID" */
@@ -173,10 +174,13 @@ export function useSpeechSynthesis(
     (text: string) => {
       if (!isSupported || isMuted || !text.trim()) return;
 
+      const spokenText = cleanTextForSpeech(text);
+      if (!spokenText) return;
+
       try {
         window.speechSynthesis.cancel();
 
-        const utterance = new SpeechSynthesisUtterance(text);
+        const utterance = new SpeechSynthesisUtterance(spokenText);
         utterance.lang = lang;
         utterance.rate = rate;
         utterance.pitch = pitch;

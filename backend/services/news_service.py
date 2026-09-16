@@ -8,14 +8,20 @@ Docs: https://docs.sectors.app/api-references/v2/indonesia/news/news
 
 from __future__ import annotations
 
-import httpx
+import json
 import logging
+from pathlib import Path
 from typing import Any
+
+import httpx
 
 from backend.config import get_settings
 from backend.cache import get_cache
 
 logger = logging.getLogger(__name__)
+
+# Directory where local JSON fixtures are stored
+FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 
 # HTTP timeout in seconds
 REQUEST_TIMEOUT = 20.0
@@ -55,6 +61,18 @@ def classify_sentiment(tags: list[str]) -> str:
     return "NETRAL"
 
 
+def _load_mock_news() -> list[dict[str, Any]]:
+    """Load local news fixtures from JSON file."""
+    fixture_path = FIXTURES_DIR / "news_fixture.json"
+    if fixture_path.exists():
+        try:
+            with open(fixture_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load news fixture: {e}")
+    return []
+
+
 async def fetch_news(
     symbols: list[str] | None = None,
     limit: int = DEFAULT_NEWS_LIMIT,
@@ -86,6 +104,41 @@ async def fetch_news(
         return cached
 
     settings = get_settings()
+
+    # Quota Saving / Mock Data Mode
+    if settings.USE_MOCK_DATA:
+        logger.info("USE_MOCK_DATA=True: Loading news from local fixtures (0 tokens consumed)")
+        mock_articles = _load_mock_news()
+        filtered = []
+        sym_set = set(s.upper().replace(".JK", "") for s in (symbols or []))
+        for art in mock_articles:
+            art_syms = set(s.upper().replace(".JK", "") for s in art.get("symbols", []))
+            if not sym_set or (sym_set & art_syms):
+                tags = art.get("tags", [])
+                filtered.append({
+                    "title": art.get("title", ""),
+                    "body": art.get("body", ""),
+                    "tags": tags,
+                    "sentiment": classify_sentiment(tags),
+                    "timestamp": art.get("timestamp", ""),
+                    "symbols": art.get("symbols", []),
+                })
+        if not filtered:
+            # Fallback to general articles if no exact ticker match
+            for art in mock_articles:
+                tags = art.get("tags", [])
+                filtered.append({
+                    "title": art.get("title", ""),
+                    "body": art.get("body", ""),
+                    "tags": tags,
+                    "sentiment": classify_sentiment(tags),
+                    "timestamp": art.get("timestamp", ""),
+                    "symbols": art.get("symbols", []),
+                })
+
+        res = filtered[:limit]
+        await cache.set("news", cache_key, res)
+        return res
 
     params: dict[str, Any] = {
         "extension": "idx",

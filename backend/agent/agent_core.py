@@ -47,6 +47,7 @@ SYSTEM_PROMPT = (
     "\n5. Sebutkan status kesehatan keuangan (SEHAT/WASPADA/BERISIKO TINGGI)."
     "\n6. Format: 2-3 paragraf singkat dan padat."
     "\n7. Jika ada berita terkait, sebutkan sentimen umumnya."
+    "\n8. Gunakan bahasa narasi yang mengalir dan ramah Text-to-Speech (hindari simbol aneh atau karakter berlebihan)."
 )
 
 # HTTP timeout for LLM calls
@@ -109,7 +110,12 @@ async def _call_llm(
 
         choices = data.get("choices", [])
         if choices:
-            return choices[0].get("message", {}).get("content", "")
+            raw_content = choices[0].get("message", {}).get("content", "")
+            # Clean thinking tags from reasoning models
+            import re
+            cleaned_content = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL)
+            cleaned_content = re.sub(r"^Here's a thinking process:.*?\n\n", "", cleaned_content, flags=re.DOTALL | re.IGNORECASE)
+            return cleaned_content.strip()
 
         logger.warning("LLM returned no choices")
         return _fallback_narrative()
