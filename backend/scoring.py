@@ -115,10 +115,19 @@ def _score_pe(val: float) -> tuple[float, str]:
 
 
 def _get_status(score: int) -> str:
-    """Map numeric score (0-100) to clear screen-reader-friendly status."""
+    """Map numeric score (0-100) to clear screen-reader-friendly status.
+
+    Tiers:
+        85-100 → SANGAT SEHAT   (fundamental prima, semua metrik unggul)
+        70-84  → SEHAT           (fundamental kuat, minor caveats)
+        50-69  → WASPADA         (perlu perhatian, ada metrik lemah)
+        0-49   → BERISIKO TINGGI (fundamental rapuh, risiko signifikan)
+    """
     if score >= 85:
+        return "SANGAT SEHAT"
+    elif score >= 70:
         return "SEHAT"
-    elif score >= 60:
+    elif score >= 50:
         return "WASPADA"
     return "BERISIKO TINGGI"
 

@@ -454,22 +454,36 @@ export default function WiniWorkspace() {
 
             {/* Giant Interactive Glowing Mic Button */}
             <div className="relative flex items-center justify-center my-3">
-              {/* Visual Ping Ripple Rings */}
-              <div
-                aria-hidden="true"
-                className={`absolute inset-0 rounded-full bg-cyan-500/20 blur-xl scale-125 pointer-events-none ${
-                  isMicActive || isListening ? "animate-pulse" : "animate-pulse-slow"
-                }`}
-              ></div>
 
-              <div
-                aria-hidden="true"
-                className={`absolute -inset-4 rounded-full border-2 mic-glow-ring pointer-events-none ${
-                  isMicActive
-                    ? "border-emerald-400/80 shadow-emerald-500/40"
-                    : "border-cyan-500/30"
-                }`}
-              ></div>
+              {/* Outer ambient glow — only shown when mic active */}
+              {isMicActive && (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-0 rounded-full bg-emerald-500/30 blur-2xl scale-150 pointer-events-none animate-pulse"
+                  />
+                  {/* Ripple ring 1 */}
+                  <span
+                    aria-hidden="true"
+                    className="absolute rounded-full border-2 border-emerald-400/70 pointer-events-none animate-ping"
+                    style={{ inset: "-12px" }}
+                  />
+                  {/* Ripple ring 2 — slower */}
+                  <span
+                    aria-hidden="true"
+                    className="absolute rounded-full border border-emerald-300/40 pointer-events-none animate-ping"
+                    style={{ inset: "-24px", animationDuration: "1.4s" }}
+                  />
+                </>
+              )}
+
+              {/* Idle glow ring */}
+              {!isMicActive && (
+                <div
+                  aria-hidden="true"
+                  className="absolute -inset-4 rounded-full border border-cyan-500/30 mic-glow-ring pointer-events-none"
+                />
+              )}
 
               {/* Main Button */}
               <button
@@ -487,19 +501,27 @@ export default function WiniWorkspace() {
                     : "Mikrofon Siaga: Pencet keyboard 2x atau klik 2x untuk mulai berbicara."
                 }
                 aria-pressed={isMicActive}
-                className={`focus-accessible relative z-10 w-28 h-28 sm:w-32 sm:h-32 rounded-full flex flex-col items-center justify-center shadow-2xl hover:brightness-110 active:scale-95 transition-all duration-200 ring-4 ${
+                className={`focus-accessible relative z-10 w-28 h-28 sm:w-32 sm:h-32 rounded-full flex flex-col items-center justify-center shadow-2xl hover:brightness-110 active:scale-95 transition-all duration-300 ring-4 ${
                   isMicActive
-                    ? "bg-gradient-to-b from-emerald-400 to-emerald-600 text-slate-950 ring-emerald-300/80 shadow-emerald-500/50 animate-pulse"
-                    : "bg-gradient-to-b from-cyan-500 to-cyan-700 text-slate-950 ring-cyan-300/40 shadow-cyan-500/50"
+                    ? "bg-gradient-to-b from-emerald-300 to-emerald-600 text-slate-950 ring-emerald-300 shadow-[0_0_40px_8px_rgba(52,211,153,0.6)]"
+                    : "bg-gradient-to-b from-cyan-500 to-cyan-700 text-slate-950 ring-cyan-300/40 shadow-cyan-500/30"
                 }`}
                 type="button"
               >
-                <svg aria-hidden="true" className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path>
                   <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path>
                 </svg>
+                {/* "● REC AKTIF" badge inside button — only visible when mic is on */}
+                {isMicActive && (
+                  <span className="mt-1 flex items-center gap-1 text-[10px] font-extrabold tracking-widest text-slate-900 uppercase">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping inline-block" />
+                    REC
+                  </span>
+                )}
               </button>
             </div>
+
 
             {/* Action Indicator Text */}
             <div className="text-center mt-3 space-y-1.5">
