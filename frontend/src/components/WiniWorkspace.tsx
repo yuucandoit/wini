@@ -9,39 +9,72 @@ import { useAudioSpectrum } from "@/hooks/useAudioSpectrum";
 
 import WelcomeBanner from "@/components/WelcomeBanner";
 import ResultWorkspace from "@/components/ResultWorkspace";
+import GlossaryCard from "@/components/GlossaryCard";
+import { findGlossaryEntry, isGlossaryQuery } from "@/lib/glossary";
+import type { GlossaryEntry } from "@/lib/glossary";
 
 const GREETING_SPOKEN =
-  "Selamat datang di WINI AI. Untuk mengaktifkan mikrofon, silakan pencet keyboard dua kali tombol apa saja, atau klik di mana saja dua kali.";
+  "Selamat datang di WINI AI. Tekan tombol Mulai atau ucapkan Let's go WINI untuk memulai.";
 
 const MIC_ACTIVE_ANNOUNCEMENT =
   "Mikrofon sudah aktif. Silakan sebutkan saham atau pertanyaan Anda.";
 
 const QUICK_PROMPTS = [
   { label: "📊 Bandingkan TLKM vs ISAT", query: "Bandingkan fundamental saham TLKM dan ISAT" },
+  { label: "🗓️ Tren 4 Kuartal ADRO", query: "Bagaimana tren kesehatan ADRO dalam 4 kuartal terakhir?" },
+  { label: "📦 Simulasi Portofolio 10 Juta", query: "Kalau saya taruh 10 juta di BBCA, TLKM, dan ASII masing-masing sama rata, seberapa sehat portofolio saya?" },
   { label: "💰 Top 5 Saham Sehat", query: "Tampilkan top 5 saham paling sehat di BEI" },
-  { label: "📈 Cek Valuasi ASII", query: "Cek valuasi dan kesehatan saham ASII" },
-  { label: "🔍 Saham Murah PER < 10", query: "Cari saham murah dengan PER di bawah 10" },
+  { label: "🏦 Top Saham Perbankan", query: "Rekomendasi top saham perbankan yang sehat" },
+  { label: "📖 Apa itu DER?", query: "Apa itu DER?" },
 ];
+
+function sanitizeSpokenQuery(text: string): string {
+  let clean = text.trim();
+  const echoPatterns = [
+    /^.*?(?:mikrofon\s+sudah\s+aktif|silakan\s+sebutkan\s+saham\s+atau\s+pertanyaan\s+anda|sebutkan\s+saham\s+atau\s+pertanyaan\s+anda|pertanyaan\s+anda)\s*[,.:;]?\s*/i,
+    /^.*?(?:silakan\s+sebutkan|sebutkan\s+saham)\s*[,.:;]?\s*/i,
+  ];
+  for (const pat of echoPatterns) {
+    clean = clean.replace(pat, "").trim();
+  }
+  return clean;
+}
+
+function isWakeWordOrGreetingOnly(text: string): boolean {
+  const t = text.toLowerCase().trim().replace(/['’]/g, "");
+  return /^(halo(\s*wini)?|hai(\s*wini)?|hei(\s*wini)?|lets\s*go(\s*wini)?|mulai(\s*wini)?|tes(\s*mic)?|selamat\s*(pagi|siang|sore|malam)|assalamualaikum|wini)$/i.test(t);
+}
+
+function stripWakeWordPrefix(text: string): string {
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(/^(?:halo|hai|hei|lets\s*go|let'?s\s*go|mulai)\s*(?:wini)?\s*[,.:;!-]?\s*/i, "");
+  cleaned = cleaned.replace(/^wini\s*[,.:;!-]?\s*/i, "");
+  return cleaned.trim();
+}
 
 export default function WiniWorkspace() {
   const [phase, setPhase] = useState<"greeting" | "dashboard" | "processing" | "results">("greeting");
   const [currentQuery, setCurrentQuery] = useState<string>("");
   const [textInput, setTextInput] = useState<string>("");
   const [captionText, setCaptionText] = useState<string>(
-    "“Selamat datang di WINI AI. Pencet keyboard 2x (tombol apa saja) atau klik 2x di mana saja untuk mengaktifkan mikrofon.”"
+    "“Selamat datang di WINI AI. Tekan tombol Mulai atau ucapkan 'Let's go WINI' untuk memulai.”"
   );
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isMicActive, setIsMicActive] = useState<boolean>(false);
+  const [glossaryEntry, setGlossaryEntry] = useState<GlossaryEntry | null>(null);
 
   const textInputRef = useRef<HTMLInputElement>(null);
   const lastKeyTimeRef = useRef<number>(0);
   const lastPointerTimeRef = useRef<number>(0);
   const isMicActiveRef = useRef<boolean>(false);
   const phaseRef = useRef<string>("greeting");
-
-  isMicActiveRef.current = isMicActive;
-  phaseRef.current = phase;
+  const isSpeakingRef = useRef<boolean>(false);
+  const lastWakeWordHandledTimeRef = useRef<number>(0);
+  const hasMountedGreetingRef = useRef<boolean>(false);
+  const startListeningRef = useRef<() => void>(() => {});
+  const stopListeningRef = useRef<() => void>(() => {});
+  const resetTranscriptRef = useRef<() => void>(() => {});
 
   // Speech synthesis hook with natural Indonesian voice
   const {
@@ -49,35 +82,277 @@ export default function WiniWorkspace() {
     isSpeaking,
     isMuted,
     toggleMute,
+    ttsRate,
+    setTtsRate,
     speak,
     cancel: cancelSpeech,
     playChime,
+    playStatusEarcon,
   } = useSpeechSynthesis({
     lang: "id-ID",
-    rate: 0.98,
+    rate: 1.0,
     pitch: 1.02,
   });
 
-  // Handle final recognized speech
-  const handleFinalSpeech = useCallback((spokenText: string) => {
-    const clean = spokenText.trim();
-    if (!clean) return;
+  // Keep refs updated for event listeners & closures
+  useEffect(() => {
+    isMicActiveRef.current = isMicActive;
+    phaseRef.current = phase;
+    isSpeakingRef.current = isSpeaking;
+  }, [isMicActive, phase, isSpeaking]);
 
-    // Filter out assistant's own activation announcement if captured
-    if (clean.toLowerCase().includes("mikrofon sudah aktif")) {
+  // Keep a ref to the latest result for use inside voice command handler closure
+  const resultRef = useRef<typeof result>(null);
+  resultRef.current = result;
+
+  // Real-time microphone spectrum analyser (8 bars)
+  const { barHeights, startSpectrum, stopSpectrum } = useAudioSpectrum({ bars: 8 });
+
+  // Resume microphone listening safely after speech finishes
+  const resumeListeningAfterSpeak = useCallback(() => {
+    setTimeout(() => {
+      if (phaseRef.current === "results" || phaseRef.current === "dashboard") {
+        resetTranscriptRef.current();
+        startListeningRef.current();
+        startSpectrum();
+        setIsMicActive(true);
+      }
+    }, 200);
+  }, [startSpectrum]);
+
+  // Voice command parser for the results page
+  const handleVoiceCommandOnResults = useCallback((text: string) => {
+    const cleanText = sanitizeSpokenQuery(text);
+    const t = cleanText.toLowerCase().trim();
+
+    // "ulangi" / "ulang lagi" / "baca ulang" → re-speak summary
+    if (t.match(/\b(ulangi|ulang|baca ulang|repeat|ulangi lagi)\b/)) {
+      cancelSpeech();
+      const summary = resultRef.current?.summary;
+      if (summary) {
+        setCaptionText("🔁 Mengulangi ringkasan analisis...");
+        stopListeningRef.current();
+        stopSpectrum();
+        setIsMicActive(false);
+        speak(summary, resumeListeningAfterSpeak);
+      }
       return;
+    }
+
+    // "utang" / "DER" / "DAR" / "berapa utang" → speak debt metrics
+    if (t.match(/\b(utang|hutang|der|dar|berapa utang|liabilitas|leverage)\b/)) {
+      cancelSpeech();
+      const hs = resultRef.current?.healthScore;
+      if (hs) {
+        const msg = `Skor kesehatan ${hs.symbol}: ${hs.score} dari 100, status ${hs.category}.`;
+        setCaptionText("📊 Membacakan skor kesehatan...");
+        stopListeningRef.current();
+        stopSpectrum();
+        setIsMicActive(false);
+        speak(msg, resumeListeningAfterSpeak);
+      }
+      return;
+    }
+
+    // "kembali" / "baru" / "analisis baru" / "selesai" → back to dashboard
+    if (t.match(/\b(kembali|back|baru|analisis baru|selesai|reset|home|beranda)\b/)) {
+      setCaptionText("↩️ Kembali ke dasbor...");
+      // handleResetToDashboard will be called after this callback returns
+      setTimeout(() => handleResetToDashboard(), 300);
+      return;
+    }
+
+    // "rebalance" / "rebalancing" / "saran alokasi" → speak portfolio rebalancing advice
+    if (t.match(/\b(rebalance|rebalancing|saran alokasi|alokasi|portofolio)\b/)) {
+      const port = resultRef.current?.portfolio;
+      if (port) {
+        cancelSpeech();
+        setCaptionText("⚖️ Membacakan saran rebalancing...");
+        stopListeningRef.current();
+        stopSpectrum();
+        setIsMicActive(false);
+        speak(port.rebalancingAdvice, resumeListeningAfterSpeak);
+        return;
+      }
+    }
+
+    // "tren" / "kuartal" / "grafik" → speak trend summary
+    if (t.match(/\b(tren|kuartal|quarter|grafik|perkembangan)\b/)) {
+      const tr = resultRef.current?.historicalTrend;
+      if (tr) {
+        cancelSpeech();
+        setCaptionText("🗓️ Membacakan ringkasan tren...");
+        stopListeningRef.current();
+        stopSpectrum();
+        setIsMicActive(false);
+        speak(tr.summary, resumeListeningAfterSpeak);
+        return;
+      }
+    }
+
+    // --- Glossary intercept (also works from results page) ---
+    if (isGlossaryQuery(cleanText)) {
+      const entry = findGlossaryEntry(cleanText);
+      if (entry) {
+        cancelSpeech();
+        stopListeningRef.current();
+        stopSpectrum();
+        setIsMicActive(false);
+        setGlossaryEntry(entry);
+        setCaptionText(`📖 ${entry.term}`);
+        speak(`${entry.term}. ${entry.definition} Analogi: ${entry.analogy}`, resumeListeningAfterSpeak);
+        return;
+      }
+    }
+
+    // Any other utterance → treat as new query
+    setCaptionText(`🔍 Menganalisis: "${cleanText}"`);
+    handleSubmitQuery(cleanText);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cancelSpeech, speak, resumeListeningAfterSpeak, stopSpectrum]);
+
+  // Handle final recognized speech — routes differently by phase
+  const handleFinalSpeech = useCallback((spokenText: string) => {
+    // If assistant is actively speaking, discard speech input to avoid audio echo bleed
+    if (isSpeakingRef.current) return;
+
+    const rawClean = sanitizeSpokenQuery(spokenText);
+    if (!rawClean) return;
+
+    // 1. Guard against wake word / greeting being treated as a stock query
+    const isWakeOnly = isWakeWordOrGreetingOnly(rawClean);
+    const now = Date.now();
+
+    if (isWakeOnly) {
+      // If we just handled this wake word via interim within 2.5 seconds, safely ignore duplicate final event
+      if (now - lastWakeWordHandledTimeRef.current < 2500) {
+        return;
+      }
+      lastWakeWordHandledTimeRef.current = now;
+
+      if (phaseRef.current === "greeting") {
+        cancelSpeech();
+        stopListeningRef.current();
+        stopSpectrum();
+        setIsMicActive(false);
+        playChime("success");
+        setPhase("dashboard");
+        setCaptionText("🎙️ Halo! Mau cek saham apa hari ini?");
+        speak("Halo! Mau cek saham apa hari ini?", () => {
+          setTimeout(() => {
+            resetTranscriptRef.current();
+            startListeningRef.current();
+            startSpectrum();
+            setIsMicActive(true);
+          }, 200);
+        });
+        return;
+      }
+
+      if (phaseRef.current === "dashboard") {
+        cancelSpeech();
+        playChime("start");
+        setCaptionText("🎙️ Halo! Silakan sebutkan saham yang ingin Anda analisis (contoh: BBCA atau TLKM)...");
+        speak("Halo! Silakan sebutkan kode saham yang ingin Anda analisis, misalnya BBCA atau TLKM.", () => {
+          setTimeout(() => {
+            resetTranscriptRef.current();
+            startListeningRef.current();
+            startSpectrum();
+            setIsMicActive(true);
+          }, 200);
+        });
+        return;
+      }
+
+      if (phaseRef.current === "results") {
+        cancelSpeech();
+        playChime("start");
+        setCaptionText("🎙️ Halo! Katakan 'ulangi', 'tren', atau sebutkan saham baru...");
+        speak("Halo! Mau analisis saham apa lagi?", () => {
+          setTimeout(() => {
+            resetTranscriptRef.current();
+            startListeningRef.current();
+            startSpectrum();
+            setIsMicActive(true);
+          }, 200);
+        });
+        return;
+      }
+      return;
+    }
+
+    // 2. Strip wake word prefix if user said "Halo WINI, bagaimana fundamental BBRI?"
+    const clean = stripWakeWordPrefix(rawClean);
+    if (!clean) {
+      // Nothing left after stripping prefix
+      return;
+    }
+
+    // If user asked a real stock question while on the greeting screen, transition to dashboard
+    if (phaseRef.current === "greeting") {
+      setPhase("dashboard");
+    }
+
+    if (phaseRef.current === "results") {
+      // Route to voice command parser instead of starting a brand-new query
+      handleVoiceCommandOnResults(clean);
+      return;
+    }
+
+    // --- Glossary intercept: "apa itu DER?", "jelaskan ROE", etc. ---
+    if (isGlossaryQuery(clean)) {
+      const entry = findGlossaryEntry(clean);
+      if (entry) {
+        cancelSpeech();
+        stopListeningRef.current();
+        stopSpectrum();
+        setIsMicActive(false);
+        setGlossaryEntry(entry);
+        setCaptionText(`📖 ${entry.term}`);
+        speak(`${entry.term}. ${entry.definition} Analogi: ${entry.analogy}`, resumeListeningAfterSpeak);
+        return;
+      }
     }
 
     setCaptionText(`"${clean}"`);
     handleSubmitQuery(clean);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleVoiceCommandOnResults, cancelSpeech, speak, playChime, resumeListeningAfterSpeak, stopSpectrum, startSpectrum]);
 
   // Handle interim live transcript
   const handleInterimSpeech = useCallback((interimText: string) => {
-    const clean = interimText.trim();
+    // Prevent mic echo from assistant speech
+    if (isSpeakingRef.current) return;
+
+    const clean = sanitizeSpokenQuery(interimText);
     if (!clean) return;
+
+    // Wake word immediate trigger on interim speech during greeting!
+    if (phaseRef.current === "greeting") {
+      if (isWakeWordOrGreetingOnly(clean)) {
+        lastWakeWordHandledTimeRef.current = Date.now();
+        cancelSpeech();
+        stopListeningRef.current();
+        stopSpectrum();
+        setIsMicActive(false);
+        playChime("success");
+        setPhase("dashboard");
+        setCaptionText("🎙️ Halo! Mau cek saham apa hari ini?");
+        speak("Halo! Mau cek saham apa hari ini?", () => {
+          setTimeout(() => {
+            resetTranscriptRef.current();
+            startListeningRef.current();
+            startSpectrum();
+            setIsMicActive(true);
+          }, 200);
+        });
+        return;
+      }
+      return;
+    }
+
     setCaptionText(`Mendengarkan: "${clean}"`);
-  }, []);
+  }, [cancelSpeech, playChime, speak, startSpectrum, stopSpectrum]);
 
   // Speech recognition hook
   const {
@@ -96,50 +371,66 @@ export default function WiniWorkspace() {
     onInterim: handleInterimSpeech,
   });
 
-  // Real-time microphone spectrum analyser (8 bars)
-  const { barHeights, startSpectrum, stopSpectrum } = useAudioSpectrum({ bars: 8 });
+  // Keep STT ref proxies synced
+  startListeningRef.current = startListening;
+  stopListeningRef.current = stopListening;
+  resetTranscriptRef.current = resetTranscript;
+
+  // Effective mic state: only truly active when recording AND assistant is NOT speaking
+  const isEffectiveMicActive = (isMicActive || isListening) && !isSpeaking;
 
   // Initial greeting audio playback
   const triggerGreeting = useCallback(() => {
     playChime("start");
-    speak(GREETING_SPOKEN);
-  }, [playChime, speak]);
+    stopListeningRef.current();
+    stopSpectrum();
+    setIsMicActive(false);
+    speak(GREETING_SPOKEN, () => {
+      // Once assistant completes greeting speech, open mic in greeting phase to listen for wake word
+      setTimeout(() => {
+        if (phaseRef.current === "greeting") {
+          resetTranscriptRef.current();
+          startListeningRef.current();
+          startSpectrum();
+          setIsMicActive(true);
+        }
+      }, 200);
+    });
+  }, [playChime, speak, stopSpectrum, startSpectrum]);
 
   useEffect(() => {
-    // Speak greeting audio when landing on greeting screen
-    const timer = setTimeout(() => {
-      triggerGreeting();
-    }, 600);
+    // Speak greeting audio ONCE when landing on greeting screen
+    if (!hasMountedGreetingRef.current) {
+      hasMountedGreetingRef.current = true;
+      const timer = setTimeout(() => {
+        triggerGreeting();
+      }, 600);
 
-    return () => clearTimeout(timer);
+      return () => clearTimeout(timer);
+    }
   }, [triggerGreeting]);
 
-  // Activate microphone with voice confirmation
+  // Activate microphone with immediate chime feedback
   const activateMicrophone = useCallback(() => {
     cancelSpeech();
     playChime("start");
     setIsMicActive(true);
-    setCaptionText("🎙️ Mikrofon sudah aktif! Silakan sebutkan saham atau pertanyaan Anda...");
+    setCaptionText("🎙️ Mikrofon aktif! Silakan sebutkan saham atau pertanyaan Anda...");
 
-    // Voice announcement: "Mikrofon sudah aktif. Silakan sebutkan saham atau pertanyaan Anda."
-    speak(MIC_ACTIVE_ANNOUNCEMENT);
-
-    resetTranscript();
-    setTimeout(() => {
-      startListening();
-      startSpectrum(); // Start real-time spectrum capture
-    }, 1200);
-  }, [cancelSpeech, playChime, resetTranscript, speak, startListening, startSpectrum]);
+    resetTranscriptRef.current();
+    startListeningRef.current();
+    startSpectrum();
+  }, [cancelSpeech, playChime, startSpectrum]);
 
   // Deactivate microphone
   const deactivateMicrophone = useCallback(() => {
     cancelSpeech();
     playChime("stop");
-    stopListening();
+    stopListeningRef.current();
     stopSpectrum(); // Release mic from spectrum analyser too
     setIsMicActive(false);
-    setCaptionText("Mikrofon dinonaktifkan. Pencet tombol apa saja 2x atau klik 2x untuk membuka mic.");
-  }, [cancelSpeech, playChime, stopListening, stopSpectrum]);
+    setCaptionText("Mikrofon dinonaktifkan. Ucapkan 'Let's go WINI' atau klik tombol untuk membuka mic.");
+  }, [cancelSpeech, playChime, stopSpectrum]);
 
   // Transition from greeting screen to active dashboard
   const handleActivateFromGreeting = useCallback(() => {
@@ -156,6 +447,7 @@ export default function WiniWorkspace() {
     setError(null);
     setResult(null);
     setTextInput("");
+    setGlossaryEntry(null);
     setCaptionText("Pencet tombol apa saja 2x atau klik 2x untuk membuka mikrofon.");
   }, [cancelSpeech, stopListening, stopSpectrum]);
 
@@ -277,11 +569,11 @@ export default function WiniWorkspace() {
 
   // Submit query for analysis
   const handleSubmitQuery = async (queryToAnalyze: string) => {
-    const cleanQuery = queryToAnalyze.trim();
+    const cleanQuery = sanitizeSpokenQuery(queryToAnalyze);
     if (!cleanQuery) return;
 
     cancelSpeech();
-    stopListening();
+    stopListeningRef.current();
     stopSpectrum();
     setIsMicActive(false);
 
@@ -295,15 +587,36 @@ export default function WiniWorkspace() {
 
     try {
       const analysisData = await analyzeStock(cleanQuery);
+
+      // --- EARCON: play status-specific melody before reading summary ---
+      const earconStatus = analysisData.healthScore?.category ?? "SEHAT";
       playChime("success");
+      setTimeout(() => playStatusEarcon(earconStatus), 400);
+
       setResult(analysisData);
       lastKeyTimeRef.current = 0;
       lastPointerTimeRef.current = 0;
       setPhase("results");
 
-      // Announce result narrative with natural speech
+      // Announce result narrative with natural speech (after earcon finishes ~700ms)
       if (analysisData.summary) {
-        speak(analysisData.summary);
+        setTimeout(() => {
+          speak(analysisData.summary, () => {
+            // Auto-start mic in command-listening mode only after speech is complete
+            if (phaseRef.current === "results") {
+              resetTranscriptRef.current();
+              startListeningRef.current();
+              startSpectrum();
+              setIsMicActive(true);
+              setCaptionText("🎙️ Mikrofon aktif! Katakan 'ulangi', 'tren', 'portofolio', atau sebutkan pertanyaan lain...");
+            }
+          });
+        }, 700);
+      } else {
+        resetTranscriptRef.current();
+        startListeningRef.current();
+        startSpectrum();
+        setIsMicActive(true);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Terjadi kendala saat menganalisis emiten.";
@@ -316,7 +629,8 @@ export default function WiniWorkspace() {
 
   const handleReturnToGreeting = () => {
     cancelSpeech();
-    stopListening();
+    stopListeningRef.current();
+    stopSpectrum();
     setIsMicActive(false);
     setPhase("greeting");
     setError(null);
@@ -335,6 +649,7 @@ export default function WiniWorkspace() {
           onActivate={handleActivateFromGreeting}
           onReplayAudio={triggerGreeting}
           isSpeaking={isSpeaking}
+          isListeningWakeWord={isEffectiveMicActive && phase === "greeting"}
         />
       )}
 
@@ -371,7 +686,7 @@ export default function WiniWorkspace() {
             {/* Activation Helper Badge */}
             <span
               className={`hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
-                isMicActive
+                isEffectiveMicActive
                   ? "bg-emerald-950/80 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-500/20"
                   : "bg-slate-900 border-slate-700 text-slate-300"
               }`}
@@ -379,10 +694,10 @@ export default function WiniWorkspace() {
               <span
                 aria-hidden="true"
                 className={`w-2 h-2 rounded-full mr-2 ${
-                  isMicActive ? "bg-emerald-400 animate-ping" : "bg-cyan-400 animate-pulse"
+                  isEffectiveMicActive ? "bg-emerald-400 animate-ping" : "bg-cyan-400 animate-pulse"
                 }`}
               ></span>
-              {isMicActive ? "Mikrofon Aktif!" : "Tekan Keyboard 2x / Klik 2x: Buka Mic"}
+              {isEffectiveMicActive ? "Mikrofon Aktif!" : "Tekan Keyboard 2x / Klik 2x: Buka Mic"}
             </span>
 
             {/* Re-play Greeting Audio Button */}
@@ -395,6 +710,30 @@ export default function WiniWorkspace() {
               <span aria-hidden="true">🏠</span>
               <span className="hidden sm:inline">Layar</span> Sambutan
             </button>
+
+            {/* TTS Speed Control */}
+            <div
+              className="hidden sm:flex items-center gap-0.5 bg-slate-900 border border-slate-700 rounded-lg overflow-hidden"
+              role="group"
+              aria-label="Kecepatan suara asisten"
+            >
+              {([1, 1.25, 1.5, 2] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setTtsRate(r)}
+                  aria-label={`Kecepatan suara ${r}x`}
+                  aria-pressed={ttsRate === r}
+                  className={`px-2 py-1 text-[11px] font-bold transition ${
+                    ttsRate === r
+                      ? "bg-cyan-600 text-white"
+                      : "text-slate-400 hover:text-cyan-300 hover:bg-slate-800"
+                  }`}
+                  type="button"
+                >
+                  {r}×
+                </button>
+              ))}
+            </div>
 
             {/* Audio Output State Toggle */}
             <button
@@ -456,7 +795,7 @@ export default function WiniWorkspace() {
             <div className="relative flex items-center justify-center my-3">
 
               {/* Outer ambient glow — only shown when mic active */}
-              {isMicActive && (
+              {isEffectiveMicActive && (
                 <>
                   <span
                     aria-hidden="true"
@@ -478,7 +817,7 @@ export default function WiniWorkspace() {
               )}
 
               {/* Idle glow ring */}
-              {!isMicActive && (
+              {!isEffectiveMicActive && (
                 <div
                   aria-hidden="true"
                   className="absolute -inset-4 rounded-full border border-cyan-500/30 mic-glow-ring pointer-events-none"
@@ -489,20 +828,20 @@ export default function WiniWorkspace() {
               <button
                 id="voice-mic-trigger"
                 onClick={() => {
-                  if (isMicActive) {
+                  if (isEffectiveMicActive) {
                     deactivateMicrophone();
                   } else {
                     activateMicrophone();
                   }
                 }}
                 aria-label={
-                  isMicActive
+                  isEffectiveMicActive
                     ? "Mikrofon Aktif: Sedang mendengarkan suara Anda. Tekan untuk berhenti."
-                    : "Mikrofon Siaga: Pencet keyboard 2x atau klik 2x untuk mulai berbicara."
+                    : "Mikrofon Siaga: Ucapkan Let's go WINI, pencet keyboard 2x, atau klik untuk mulai berbicara."
                 }
-                aria-pressed={isMicActive}
+                aria-pressed={isEffectiveMicActive}
                 className={`focus-accessible relative z-10 w-28 h-28 sm:w-32 sm:h-32 rounded-full flex flex-col items-center justify-center shadow-2xl hover:brightness-110 active:scale-95 transition-all duration-300 ring-4 ${
-                  isMicActive
+                  isEffectiveMicActive
                     ? "bg-gradient-to-b from-emerald-300 to-emerald-600 text-slate-950 ring-emerald-300 shadow-[0_0_40px_8px_rgba(52,211,153,0.6)]"
                     : "bg-gradient-to-b from-cyan-500 to-cyan-700 text-slate-950 ring-cyan-300/40 shadow-cyan-500/30"
                 }`}
@@ -513,7 +852,7 @@ export default function WiniWorkspace() {
                   <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path>
                 </svg>
                 {/* "● REC AKTIF" badge inside button — only visible when mic is on */}
-                {isMicActive && (
+                {isEffectiveMicActive && (
                   <span className="mt-1 flex items-center gap-1 text-[10px] font-extrabold tracking-widest text-slate-900 uppercase">
                     <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping inline-block" />
                     REC
@@ -527,13 +866,13 @@ export default function WiniWorkspace() {
             <div className="text-center mt-3 space-y-1.5">
               <p
                 className={`font-bold text-lg sm:text-xl flex items-center justify-center gap-2 ${
-                  isMicActive ? "text-emerald-400" : isSpeaking ? "text-amber-300" : "text-cyan-400"
+                  isEffectiveMicActive ? "text-emerald-400" : isSpeaking ? "text-amber-300" : "text-cyan-400"
                 }`}
               >
                 <span
                   aria-hidden="true"
                   className={`inline-block w-2.5 h-2.5 rounded-full ${
-                    isMicActive
+                    isEffectiveMicActive
                       ? "bg-emerald-400 animate-ping"
                       : isSpeaking
                       ? "bg-amber-400 animate-pulse"
@@ -541,22 +880,22 @@ export default function WiniWorkspace() {
                   }`}
                 ></span>
                 <span>
-                  {isMicActive
+                  {isEffectiveMicActive
                     ? "Mikrofon Aktif: Sedang Mendengarkan Suara Anda..."
                     : isSpeaking
                     ? "Asisten Sedang Berbicara..."
-                    : "Pencet Keyboard 2x / Klik 2x di Mana Saja"}
+                    : "Ucapkan \"Let's go WINI\" / Tekan Tombol / Klik Layar"}
                 </span>
               </p>
               <p className="text-xs sm:text-sm text-slate-400 font-medium">
-                Pencet tombol keyboard <span className="text-cyan-300 font-bold">2 kali</span> (apa saja) atau klik layar 2 kali
+                Ucapkan <span className="text-emerald-400 font-bold">&quot;Let&apos;s go WINI&quot;</span> atau tekan tombol mikrofon untuk berbicara
               </p>
             </div>
 
             {/* CENTER LIVE CAPTIONS CARD */}
             <div
               className={`w-full max-w-2xl mt-6 rounded-2xl bg-brand-card border-2 p-5 sm:p-6 shadow-2xl transition-all relative overflow-hidden ${
-                isMicActive
+                isEffectiveMicActive
                   ? "border-emerald-500/80 shadow-emerald-950/60 ring-2 ring-emerald-500/30"
                   : "border-cyan-600/60 shadow-cyan-950/60"
               }`}
@@ -568,17 +907,19 @@ export default function WiniWorkspace() {
                   <span className="flex h-2.5 w-2.5 relative">
                     <span
                       className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                        isMicActive ? "bg-emerald-400" : "bg-cyan-400"
+                        isEffectiveMicActive ? "bg-emerald-400" : "bg-cyan-400"
                       }`}
                     ></span>
                     <span
                       className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-                        isMicActive ? "bg-emerald-500" : "bg-cyan-500"
+                        isEffectiveMicActive ? "bg-emerald-500" : "bg-cyan-500"
                       }`}
                     ></span>
                   </span>
-                  <span className="text-xs uppercase tracking-wider font-extrabold text-cyan-300">
-                    PANDUAN SUARA &amp; TAKARIR WAKTU-NYATA (LIVE CAPTIONS)
+                  <span className={`text-xs uppercase tracking-wider font-extrabold ${
+                    isEffectiveMicActive ? "text-emerald-300" : "text-cyan-300"
+                  }`}>
+                    {isEffectiveMicActive ? "● MIKROFON MENDENGARKAN (LIVE)" : "PANDUAN SUARA & TAKARIR WAKTU-NYATA (LIVE CAPTIONS)"}
                   </span>
                 </div>
                 <span className="text-[11px] font-semibold bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">
@@ -606,7 +947,7 @@ export default function WiniWorkspace() {
                   // When idle / TTS speaking: gentle pulse CSS fallback
                   const MIN_PX = 4;
                   const MAX_PX = 40; // h-10 container = 40px
-                  const heightPx = isMicActive
+                  const heightPx = isEffectiveMicActive
                     ? Math.max(MIN_PX, Math.round(h * MAX_PX))
                     : MAX_PX * 0.15; // ~6px idle
 
@@ -615,7 +956,7 @@ export default function WiniWorkspace() {
                       key={i}
                       aria-hidden="true"
                       className={`w-1.5 rounded-full transition-all duration-75 ${
-                        isMicActive
+                        isEffectiveMicActive
                           ? h > 0.5
                             ? "bg-emerald-300"
                             : h > 0.2
@@ -644,6 +985,18 @@ export default function WiniWorkspace() {
               </div>
             </div>
           </section>
+
+          {/* ALTERNATIVE TEXT INPUT SECTION */}
+          {/* Glossary Card — shown when user asks "apa itu DER?" etc. */}
+          {glossaryEntry && (
+            <div className="w-full max-w-2xl">
+              <GlossaryCard
+                entry={glossaryEntry}
+                onSpeak={speak}
+                onDismiss={() => setGlossaryEntry(null)}
+              />
+            </div>
+          )}
 
           {/* ALTERNATIVE TEXT INPUT SECTION */}
           <section aria-labelledby="text-input-heading" className="w-full max-w-2xl flex flex-col items-center">
@@ -773,7 +1126,48 @@ export default function WiniWorkspace() {
             </button>
           </div>
 
-          <ResultWorkspace result={result} onNewQuery={handleResetToDashboard} />
+          {/* ── Voice Command Hint Card (results page) ── */}
+          <div
+            role="region"
+            aria-label="Perintah suara tersedia"
+            className="w-full bg-slate-900/80 border border-emerald-800/60 rounded-2xl px-5 py-4 flex flex-col sm:flex-row items-start sm:items-center gap-4"
+          >
+            {/* Live mic indicator */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+              </span>
+              <span className="text-emerald-300 text-xs font-bold uppercase tracking-widest whitespace-nowrap">
+                🎙️ Mic Aktif — Perintah Suara
+              </span>
+            </div>
+            {/* Command chips */}
+            <div className="flex flex-wrap gap-2 text-[11px]">
+              {[
+                { cmd: "Ulangi", desc: "Bacakan ulang ringkasan" },
+                { cmd: "Berapa utangnya?", desc: "Bacakan skor utang" },
+                { cmd: "Rebalancing", desc: "Saran alokasi portofolio" },
+                { cmd: "Tren kuartal", desc: "Ringkasan tren historis" },
+                { cmd: "Kembali", desc: "Ke dasbor suara" },
+              ].map(({ cmd, desc }) => (
+                <span
+                  key={cmd}
+                  className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1"
+                  title={desc}
+                >
+                  <span className="text-cyan-300 font-semibold">"{cmd}"</span>
+                  <span className="text-slate-500">— {desc}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <ResultWorkspace
+            result={result}
+            onNewQuery={handleResetToDashboard}
+            onSpeak={speak}
+          />
         </main>
       )}
 
@@ -791,21 +1185,21 @@ export default function WiniWorkspace() {
               <span className="relative flex h-2 w-2">
                 <span
                   className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                    isMicActive ? "bg-emerald-400" : "bg-cyan-400"
+                    isEffectiveMicActive ? "bg-emerald-400" : "bg-cyan-400"
                   }`}
                 ></span>
                 <span
                   className={`relative inline-flex rounded-full h-2 w-2 ${
-                    isMicActive ? "bg-emerald-500" : "bg-cyan-500"
+                    isEffectiveMicActive ? "bg-emerald-500" : "bg-cyan-500"
                   }`}
                 ></span>
               </span>
               <span>
-                {isMicActive
+                {isEffectiveMicActive
                   ? "Mikrofon Aktif: Sedang Mendengarkan Suara Anda..."
                   : isSpeaking
                   ? "Audio Sintesis: Sedang Membacakan Teks..."
-                  : "Akses Tunanetra: Pencet Keyboard 2x (Apa Saja) atau Klik 2x"}
+                  : "Akses Tunanetra: Ucapkan \"Let's go WINI\" / Tekan Tombol"}
               </span>
             </div>
 

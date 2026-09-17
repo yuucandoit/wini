@@ -6,26 +6,28 @@ interface WelcomeBannerProps {
   onActivate: () => void;
   onReplayAudio?: () => void;
   isSpeaking?: boolean;
+  isListeningWakeWord?: boolean;
 }
 
 export default function WelcomeBanner({
   onActivate,
   onReplayAudio,
   isSpeaking = false,
+  isListeningWakeWord = false,
 }: WelcomeBannerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const lastKeyTimeRef = useRef<number>(0);
   const lastPointerTimeRef = useRef<number>(0);
   const [keyPressCount, setKeyPressCount] = useState<number>(0);
 
-  useEffect(() => {
-    containerRef.current?.focus();
-  }, []);
-
   // Listen for ANY key pressed twice, or double-click anywhere
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Avoid if user somehow focused another control
+      // Allow Space or Enter on the focused activate button directly
+      if (e.key === "Enter" || e.key === " ") {
+        return;
+      }
+
       const now = Date.now();
       const diff = now - lastKeyTimeRef.current;
 
@@ -38,7 +40,6 @@ export default function WelcomeBanner({
       } else {
         lastKeyTimeRef.current = now;
         setKeyPressCount(1);
-        // Reset counter after timeout
         setTimeout(() => {
           if (Date.now() - lastKeyTimeRef.current >= 750) {
             setKeyPressCount(0);
@@ -48,7 +49,6 @@ export default function WelcomeBanner({
     };
 
     const handlePointerUp = (e: MouseEvent | TouchEvent) => {
-      // Ignore if clicking explicitly on a sub-button
       const target = e.target as HTMLElement | null;
       if (target?.tagName === "BUTTON" && !target.classList.contains("main-card")) {
         return;
@@ -58,7 +58,6 @@ export default function WelcomeBanner({
       const diff = now - lastPointerTimeRef.current;
 
       if (diff > 50 && diff < 500) {
-        // Double click / tap detected!
         e.preventDefault();
         lastPointerTimeRef.current = 0;
         onActivate();
@@ -134,23 +133,38 @@ export default function WelcomeBanner({
       <div className="flex flex-col items-center justify-center text-center max-w-3xl my-auto py-8 gap-8">
         {/* Visual Glowing Mic Icon */}
         <div className="relative flex items-center justify-center">
+          {/* Emerald glow if wake word listening, cyan otherwise */}
           <div
             aria-hidden="true"
-            className="absolute inset-0 rounded-full bg-cyan-500/20 blur-2xl scale-150 animate-pulse-slow pointer-events-none"
-          ></div>
+            className={`absolute inset-0 rounded-full blur-2xl scale-150 transition-all duration-700 pointer-events-none ${
+              isListeningWakeWord ? "bg-emerald-500/40 animate-pulse" : "bg-cyan-500/20 animate-pulse-slow"
+            }`}
+          />
           <div
             aria-hidden="true"
-            className="absolute -inset-6 rounded-full border-2 border-cyan-500/30 mic-glow-ring pointer-events-none"
-          ></div>
+            className={`absolute -inset-6 rounded-full border-2 transition-all duration-700 pointer-events-none ${
+              isListeningWakeWord ? "border-emerald-400/60 animate-ping" : "border-cyan-500/30 mic-glow-ring"
+            }`}
+          />
 
           <div
-            className="relative z-10 w-28 h-28 sm:w-36 sm:h-36 rounded-full bg-gradient-to-b from-cyan-500 to-cyan-700 text-slate-950 flex flex-col items-center justify-center shadow-2xl shadow-cyan-500/50 ring-4 ring-cyan-300/40"
+            className={`relative z-10 w-28 h-28 sm:w-36 sm:h-36 rounded-full flex flex-col items-center justify-center shadow-2xl transition-all duration-500 ring-4 ${
+              isListeningWakeWord
+                ? "bg-gradient-to-b from-emerald-300 to-emerald-600 text-slate-950 ring-emerald-300 shadow-[0_0_40px_10px_rgba(52,211,153,0.5)] scale-105"
+                : "bg-gradient-to-b from-cyan-500 to-cyan-700 text-slate-950 ring-cyan-300/40 shadow-cyan-500/50"
+            }`}
             aria-hidden="true"
           >
             <svg className="w-14 h-14 sm:w-16 sm:h-16 text-slate-950" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path>
-              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path>
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
             </svg>
+            {isListeningWakeWord && (
+              <span className="mt-1 flex items-center gap-1 text-[10px] font-extrabold tracking-widest text-slate-950 uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-950 animate-ping inline-block" />
+                STANDBY
+              </span>
+            )}
           </div>
         </div>
 
@@ -165,43 +179,61 @@ export default function WelcomeBanner({
             aria-live="polite"
             className="bg-brand-card border-2 border-cyan-600/70 rounded-2xl p-6 sm:p-8 shadow-2xl shadow-cyan-950/60 max-w-2xl mx-auto space-y-4"
           >
-            <p className="text-lg sm:text-2xl font-bold text-white leading-relaxed">
-              🔊 Untuk mengaktifkan mikrofon:
-            </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 text-base sm:text-lg font-semibold text-cyan-300">
-              <span className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-inner">
-                Pencet Keyboard 2x <kbd className="text-amber-300 font-mono text-sm">(Tombol Apa Saja)</kbd>
-              </span>
-              <span className="text-slate-400 font-normal">atau</span>
-              <span className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-inner">
-                Klik / Ketuk 2x di Mana Saja
-              </span>
+            {/* Primary Voice Wake Word Prompt */}
+            <div className="space-y-2">
+              <p className="text-xl sm:text-2xl font-black text-white leading-relaxed flex items-center justify-center gap-2">
+                <span>🗣️</span>
+                <span>Ucapkan Kata Pemicu Suara:</span>
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <span className="px-5 py-2.5 rounded-xl bg-emerald-950/80 border-2 border-emerald-400 text-emerald-300 font-extrabold text-lg sm:text-xl shadow-lg shadow-emerald-950/40">
+                  "Let's go WINI"
+                </span>
+                <span className="text-slate-400 font-normal">atau</span>
+                <span className="px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-cyan-300 font-bold text-base sm:text-lg">
+                  "Halo WINI"
+                </span>
+              </div>
             </div>
 
-            {keyPressCount === 1 && (
-              <p className="text-sm font-semibold text-amber-300 animate-pulse pt-2">
-                ⚡ Tombol terdeteksi 1x! Tekan 1 kali lagi untuk langsung mengaktifkan mikrofon...
-              </p>
+            {/* Listening Indicator */}
+            {isListeningWakeWord && (
+              <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-emerald-950/50 border border-emerald-500/50 text-emerald-300 text-xs sm:text-sm font-semibold animate-pulse">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                <span>Mikrofon Siaga — Silakan Ucapkan "Let's go WINI"!</span>
+              </div>
             )}
 
             {isSpeaking && (
               <div className="flex items-center justify-center gap-2 pt-2 text-xs text-slate-400">
-                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
                 <span>Asisten sedang membacakan panduan audio...</span>
               </div>
+            )}
+
+            {/* Fallback keyboard info */}
+            <div className="pt-2 border-t border-slate-800 text-xs text-slate-400">
+              Opsi Cadangan: Tekan <kbd className="text-cyan-300 font-mono">Spasi</kbd> / <kbd className="text-cyan-300 font-mono">Enter</kbd> 1x, atau klik 2x di mana saja.
+            </div>
+
+            {keyPressCount === 1 && (
+              <p className="text-sm font-semibold text-amber-300 animate-pulse pt-1">
+                ⚡ Tombol terdeteksi 1x! Tekan 1 kali lagi untuk langsung mengaktifkan...
+              </p>
             )}
           </div>
         </div>
 
-        {/* Giant Clickable Trigger Card */}
+        {/* Giant Clickable / Keyboard Accessible Trigger Button */}
         <button
           onClick={onActivate}
           type="button"
-          aria-label="Aktifkan mikrofon sekarang"
+          autoFocus
+          aria-label="Mulai aplikasi WINI AI. Tekan Spasi atau Enter untuk mengizinkan mikrofon dan memulai."
           className="focus-accessible main-card w-full max-w-md py-4 px-8 rounded-2xl bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 active:scale-95 text-slate-950 font-extrabold text-base sm:text-lg shadow-xl shadow-cyan-600/30 transition-all flex items-center justify-center gap-3 cursor-pointer"
         >
-          <span className="text-xl">🎙️</span>
-          <span>Aktifkan Mikrofon Sekarang</span>
+          <span className="text-2xl">🎙️</span>
+          <span>Mulai WINI AI (Tekan Spasi / Enter)</span>
         </button>
 
         <p className="text-xs sm:text-sm text-slate-400 font-medium">

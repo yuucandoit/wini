@@ -38,6 +38,7 @@ export function useAudioSpectrum(
   const [isActive, setIsActive] = useState(false);
   const [barHeights, setBarHeights] = useState<number[]>(Array(bars).fill(0));
 
+  const isActiveRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -49,6 +50,7 @@ export function useAudioSpectrum(
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      isActiveRef.current = false;
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
       try { audioCtxRef.current?.close(); } catch { /* ignore */ }
@@ -56,11 +58,20 @@ export function useAudioSpectrum(
   }, []);
 
   const startSpectrum = useCallback(async () => {
-    if (isActive) return;
+    if (isActiveRef.current) return;
+    isActiveRef.current = true;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
       if (!isMountedRef.current) {
         stream.getTracks().forEach((t) => t.stop());
+        isActiveRef.current = false;
         return;
       }
       streamRef.current = stream;
@@ -103,11 +114,13 @@ export function useAudioSpectrum(
       };
       rafRef.current = requestAnimationFrame(tick);
     } catch (err) {
+      isActiveRef.current = false;
       console.warn("useAudioSpectrum: getUserMedia failed", err);
     }
-  }, [isActive, bars, fftSize, smoothingTimeConstant]);
+  }, [bars, fftSize, smoothingTimeConstant]);
 
   const stopSpectrum = useCallback(() => {
+    isActiveRef.current = false;
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;

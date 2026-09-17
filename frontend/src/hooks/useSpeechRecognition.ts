@@ -162,20 +162,22 @@ export function useSpeechRecognition(
     recognition.onend = () => {
       setIsListening(false);
 
-      // Auto-restart if autoRestart is enabled and not paused or explicitly stopped
-      if (shouldKeepListeningRef.current && !isPausedRef.current) {
+      // Auto-restart ONLY if autoRestart is explicitly true and not paused or stopped
+      if (autoRestart && shouldKeepListeningRef.current && !isPausedRef.current) {
         try {
           recognition.start();
         } catch {
           // May throttle slightly on rapid reconnects
           setTimeout(() => {
-            if (shouldKeepListeningRef.current && !isPausedRef.current) {
+            if (autoRestart && shouldKeepListeningRef.current && !isPausedRef.current) {
               try {
                 recognition.start();
               } catch {}
             }
           }, 300);
         }
+      } else {
+        shouldKeepListeningRef.current = false;
       }
     };
 
@@ -184,6 +186,9 @@ export function useSpeechRecognition(
         console.warn("SpeechRecognition notice:", event.error);
       }
       setIsListening(false);
+      if (!autoRestart) {
+        shouldKeepListeningRef.current = false;
+      }
     };
 
     recognitionRef.current = recognition;

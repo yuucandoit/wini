@@ -11,7 +11,7 @@ export type AppPhase =
   | "results";    // Analysis results rendered
 
 /** Health score severity categories */
-export type HealthCategory = "SEHAT" | "WASPADA" | "BAHAYA" | "BERISIKO TINGGI";
+export type HealthCategory = "SANGAT SEHAT" | "SEHAT" | "WASPADA" | "BAHAYA" | "BERISIKO TINGGI";
 
 /** A single emiten's health score */
 export interface HealthScore {
@@ -47,6 +47,51 @@ export interface ComparisonResult {
   metrics: ComparisonMetric[];
 }
 
+/** Single quarter data point in historical trend */
+export interface QuarterlyPoint {
+  quarter: string;
+  score: number;
+  status: HealthCategory;
+  der?: number | null;
+  roe?: number | null;
+  pe?: number | null;
+}
+
+/** Historical trend analysis data */
+export interface HistoricalTrend {
+  symbol: string;
+  companyName: string;
+  points: QuarterlyPoint[];
+  direction: "MEMBAIK" | "MEMBURUK" | "STAGNAN";
+  delta: number;
+  earlyWarning: string | null;
+  summary: string;
+}
+
+/** Single stock allocation in portfolio simulation */
+export interface PortfolioAllocation {
+  symbol: string;
+  name: string;
+  weight: number;
+  nominal: number;
+  score: number;
+  status: HealthCategory;
+  suggested_weight?: number;
+  suggested_nominal?: number;
+}
+
+/** Portfolio simulation with rebalancing advice */
+export interface PortfolioSimulation {
+  totalCapital: number;
+  weightedScore: number;
+  status: HealthCategory;
+  allocations: PortfolioAllocation[];
+  weakestStock: { symbol: string; reason: string };
+  strongestStock: { symbol: string; reason: string };
+  rebalancingAdvice: string;
+  projectedScoreAfterRebalance?: number;
+}
+
 /** Backend analysis response */
 export interface AnalysisResult {
   /** Natural-language summary of the analysis */
@@ -57,6 +102,10 @@ export interface AnalysisResult {
   healthScore: HealthScore | null;
   /** Side-by-side comparison data (multi-stock query) */
   comparison: ComparisonResult | null;
+  /** Historical quarterly trend data (if trend query) */
+  historicalTrend?: HistoricalTrend | null;
+  /** Portfolio simulation data (if portfolio query) */
+  portfolio?: PortfolioSimulation | null;
   /** Raw query that produced this result */
   query: string;
 }

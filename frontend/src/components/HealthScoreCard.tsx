@@ -13,7 +13,10 @@ export default function HealthScoreCard({ healthScore }: HealthScoreCardProps) {
   let colorClasses = '';
   let barColorClass = '';
   
-  if (category === 'SEHAT') {
+  if (category === 'SANGAT SEHAT') {
+    colorClasses = 'text-emerald-400 bg-emerald-950/40 border-emerald-500/40 shadow-sm shadow-emerald-500/20';
+    barColorClass = 'bg-emerald-400';
+  } else if (category === 'SEHAT') {
     colorClasses = 'text-success bg-success/10 border-success/20';
     barColorClass = 'bg-success';
   } else if (category === 'WASPADA') {

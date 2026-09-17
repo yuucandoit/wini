@@ -62,16 +62,20 @@ COMPANY_NAME_TO_TICKER: dict[str, str] = {
 
 # Words to ignore when scanning text for tickers (Indonesian common words & commands)
 COMMON_STOPWORDS_4 = {
+    "WINI", "LETS", "GOOO", "GASS", "BROO", "MINI", "HEII", "PAGE", "TEST", "CALL", "USER",
+    "TREN", "ARAH", "KUAR", "MODA", "DANA", "UANG", "PORT", "SEGI", "POIN",
     "YANG", "PADA", "DARI", "ATAU", "BANK", "SKOR", "LABA", "ATAS", "SAJA",
     "JUGA", "KITA", "BISA", "AKAN", "BAGI", "KAMI", "SAMA", "BILA", "AGAR",
     "OLEH", "LALU", "CARA", "LIMA", "ENAM", "SATU", "DUA", "INFO", "DATA",
     "NEWS", "APAK", "MANA", "RUGI", "AI", "VS", "DAN", "BAIK", "APAP", "DENG",
-    "POST", "TEST", "NEXT", "HALO", "NAMA", "MAKA", "SAAT", "HARI", "BULAN",
+    "POST", "HALO", "NAMA", "MAKA", "SAAT", "HARI", "BULAN",
     "COBA", "CARI", "LIAT", "BAGU", "BUAT", "MAUK", "TENT", "DULU", "SAYA",
     "KAMU", "APAS", "IKUT", "NAIK", "TURU", "JUAL", "BELI", "KATA", "KODE",
     "TOP5", "TOP3", "TOP7", "TOP8", "TOP9", "TOP1", "TOP0", "EMIT", "KALI",
     "CEK", "PILI", "SEDE", "SUDA", "BIAR", "TAPI", "JIKA", "TERB", "SEHA",
-    "MENG", "SIAP", "DAPA", "TIDA", "BANY", "ADAL", "BEBE", "DEPA", "JADI"
+    "MENG", "SIAP", "DAPA", "TIDA", "BANY", "ADAL", "BEBE", "DEPA", "JADI",
+    "BUKU", "NILA", "TAKS", "RASA", "RATA", "SEMU", "SINI", "SITU", "SANA",
+    "TAON", "TAUN", "AKHI", "AWAL", "TAHU", "MAU", "KOK", "SIH", "DONG", "KAN",
 }
 
 
@@ -83,7 +87,23 @@ def extract_tickers_from_text(text: str) -> list[str]:
     without requiring any hardcoded stock lists.
     """
     import re
-    lower_text = text.lower()
+    # Clean any assistant prompt echoes that may have leaked into audio STT
+    cleaned = re.sub(
+        r"^.*?(?:mikrofon\s+sudah\s+aktif|silakan\s+sebutkan\s+saham\s+atau\s+pertanyaan\s+anda|sebutkan\s+saham\s+atau\s+pertanyaan\s+anda|pertanyaan\s+anda)\s*[,.:;]?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Strip wake word prefixes ("halo wini", "lets go wini", "wini", etc.)
+    cleaned = re.sub(
+        r"^(?:halo|hai|hei|lets\s*go|let'?s\s*go|mulai)\s*(?:wini)?\s*[,.:;!-]?\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"^wini\s*[,.:;!-]?\s*", "", cleaned, flags=re.IGNORECASE)
+
+    lower_text = cleaned.lower()
     found: list[str] = []
 
     # 1. Check known company aliases (e.g. "telkom" -> TLKM, "bca" -> BBCA, "adaro" -> ADRO)
@@ -93,11 +113,10 @@ def extract_tickers_from_text(text: str) -> list[str]:
                 found.append(sym)
 
     # 2. Check 4-letter words dynamically
-    tokens = re.findall(r"\b[A-Za-z]{4}\b", text)
+    tokens = re.findall(r"\b[A-Za-z]{4}\b", cleaned)
     for t in tokens:
         up = t.upper()
         if up not in COMMON_STOPWORDS_4 and up not in found:
-            # If word was uppercase or no aliases found yet, accept as ticker candidate
             found.append(up)
 
     return found
@@ -177,6 +196,8 @@ class AnalyzeResponse(BaseModel):
     comparative_summary: dict | None = None
     company_info: dict[str, dict] = Field(default_factory=dict)
     news_sentiment: NewsSummary
+    historical_trend: dict | None = None
+    portfolio_simulation: dict | None = None
     narrative: str
     disclaimer: str
     session_id: str
@@ -243,6 +264,24 @@ def is_discovery_query(text: str) -> bool:
     return any(kw in lower for kw in DISCOVERY_KEYWORDS)
 
 
+SECTOR_KEYWORDS = [
+    "perbankan", "bank", "keuangan", "finansial",
+    "energi", "batubara", "pertambangan", "tambang",
+    "teknologi", "tech", "telekomunikasi", "telco",
+    "consumer", "konsumer", "makanan", "kesehatan",
+    "properti", "infrastruktur", "industri", "transportasi",
+]
+
+
+def extract_sector_keyword(text: str) -> str | None:
+    """Extract sector keyword from query if present."""
+    lower = text.lower()
+    for kw in SECTOR_KEYWORDS:
+        if kw in lower:
+            return kw
+    return None
+
+
 def extract_requested_limit(text: str, default: int = 5) -> int:
     """Extract requested number of stocks (e.g. 'top 5' -> 5)."""
     import re
@@ -278,10 +317,17 @@ async def analyze_endpoint(request: AnalyzeRequest):
     # Auto-screener for discovery queries (e.g. "top 5 saham yang sedang bagus")
     if not tickers and is_discovery_query(effective_query):
         limit = extract_requested_limit(effective_query, default=5)
-        logger.info(f"Discovery query detected: '{effective_query}', auto-screening top {limit} stocks...")
-        from backend.services.sectors_service import screen_top_healthy_companies
-        screened = await screen_top_healthy_companies(limit=limit)
+        sector_kw = extract_sector_keyword(effective_query)
+        if sector_kw:
+            logger.info(f"Sector discovery query: sector='{sector_kw}', limit={limit}")
+            from backend.services.sectors_service import screen_by_sector
+            screened = await screen_by_sector(sector_keyword=sector_kw, limit=limit)
+        else:
+            logger.info(f"Discovery query detected: '{effective_query}', auto-screening top {limit} stocks...")
+            from backend.services.sectors_service import screen_top_healthy_companies
+            screened = await screen_top_healthy_companies(limit=limit)
         tickers = [c.get("symbol", "").replace(".JK", "") for c in screened if c.get("symbol")]
+
 
     if not tickers:
         raise HTTPException(
@@ -313,6 +359,8 @@ async def analyze_endpoint(request: AnalyzeRequest):
             comparative_summary=result.get("comparative_summary"),
             company_info=result.get("company_info", {}),
             news_sentiment=NewsSummary(**result["news_sentiment"]),
+            historical_trend=result.get("historical_trend"),
+            portfolio_simulation=result.get("portfolio_simulation"),
             narrative=result["narrative"],
             disclaimer=result["disclaimer"],
             session_id=result["session_id"],

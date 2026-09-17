@@ -27,8 +27,12 @@ export interface UseSpeechSynthesisReturn {
   toggleMute: () => void;
   /** Current voice name being used */
   selectedVoiceName: string;
-  /** Speak the given text */
-  speak: (text: string) => void;
+  /** Current TTS playback rate (1 | 1.25 | 1.5 | 2) */
+  ttsRate: number;
+  /** Update TTS playback rate */
+  setTtsRate: (rate: number) => void;
+  /** Speak the given text with optional onDone completion callback */
+  speak: (text: string, onDone?: () => void) => void;
   /** Pause current speech */
   pause: () => void;
   /** Resume paused speech */
@@ -37,6 +41,8 @@ export interface UseSpeechSynthesisReturn {
   cancel: () => void;
   /** Play pleasant soft chime earcon */
   playChime: (type?: "start" | "success" | "stop") => void;
+  /** Play status-specific earcon melody based on health score tier */
+  playStatusEarcon: (status: string) => void;
 }
 
 /**
@@ -89,15 +95,115 @@ function playToneChime(type: "start" | "success" | "stop" = "start") {
   }
 }
 
+/**
+ * Play a status-specific earcon melody based on health score tier.
+ * Uses Web Audio API to generate tones — no external audio files needed.
+ *
+ * SANGAT SEHAT : C5→E5→G5→C6  (ascending major arpeggio, bright & ceria)
+ * SEHAT        : C5→E5→G5      (3-note major triad, pleasant)
+ * WASPADA      : E4→D4→C4      (descending minor, cautionary)
+ * BERISIKO TINGGI: C4→B3→A3    (descending chromatic, somber/dramatic)
+ */
+function playStatusEarconTone(status: string) {
+  if (typeof window === "undefined") return;
+  const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  // Note frequencies (Hz)
+  const NOTE: Record<string, number> = {
+    A3: 220.00, B3: 246.94, C4: 261.63, D4: 293.66, E4: 329.63,
+    G4: 392.00, A4: 440.00, C5: 523.25, E5: 659.25, G5: 783.99,
+    A5: 880.00, C6: 1046.50,
+  };
+
+  // [freq, startOffset, duration]
+  type NoteSeq = [number, number, number][];
+
+  let sequence: NoteSeq;
+  const normalized = status.toUpperCase().trim();
+
+  if (normalized === "SANGAT SEHAT") {
+    // Bright ascending arpeggio — ceria, uplifting
+    sequence = [
+      [NOTE.C5, 0.00, 0.12],
+      [NOTE.E5, 0.13, 0.12],
+      [NOTE.G5, 0.26, 0.12],
+      [NOTE.C6, 0.39, 0.22],
+    ];
+  } else if (normalized === "SEHAT") {
+    // Pleasant 3-note major
+    sequence = [
+      [NOTE.C5, 0.00, 0.12],
+      [NOTE.E5, 0.14, 0.12],
+      [NOTE.G5, 0.28, 0.18],
+    ];
+  } else if (normalized === "WASPADA") {
+    // Descending cautionary — minor feel
+    sequence = [
+      [NOTE.E4, 0.00, 0.14],
+      [NOTE.D4, 0.16, 0.14],
+      [NOTE.C4, 0.32, 0.22],
+    ];
+  } else {
+    // BERISIKO TINGGI — somber descending
+    sequence = [
+      [NOTE.C4, 0.00, 0.16],
+      [NOTE.B3, 0.18, 0.16],
+      [NOTE.A3, 0.36, 0.26],
+    ];
+  }
+
+  try {
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(0.10, now);
+    masterGain.connect(ctx.destination);
+
+    sequence.forEach(([freq, offset, dur]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now + offset);
+      gain.gain.setValueAtTime(0.12, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + dur);
+      osc.connect(gain);
+      gain.connect(masterGain);
+      osc.start(now + offset);
+      osc.stop(now + offset + dur + 0.01);
+    });
+  } catch {
+    // AudioContext restricted before user gesture — gracefully ignore
+  }
+}
+
 export function useSpeechSynthesis(
   options: UseSpeechSynthesisOptions = {}
 ): UseSpeechSynthesisReturn {
-  const { lang = "id-ID", rate = 0.98, pitch = 1.02, onBoundary, onEnd } = options;
+  const { lang = "id-ID", rate = 1.0, pitch = 1.02, onBoundary, onEnd } = options;
 
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [selectedVoiceName, setSelectedVoiceName] = useState<string>("");
+
+  // TTS speed — persisted to localStorage so it survives page reload
+  const [ttsRate, setTtsRateState] = useState<number>(() => {
+    if (typeof window === "undefined") return rate;
+    const saved = localStorage.getItem("wini_tts_rate");
+    return saved ? parseFloat(saved) : rate;
+  });
+  // Ref so speak() always sees the latest rate without recreating the callback
+  const rateRef = useRef<number>(ttsRate);
+  rateRef.current = ttsRate;
+
+  const setTtsRate = useCallback((newRate: number) => {
+    setTtsRateState(newRate);
+    rateRef.current = newRate;
+    if (typeof window !== "undefined") {
+      localStorage.setItem("wini_tts_rate", String(newRate));
+    }
+  }, []);
 
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
@@ -171,18 +277,30 @@ export function useSpeechSynthesis(
   }, [pickBestIndonesianVoice]);
 
   const speak = useCallback(
-    (text: string) => {
-      if (!isSupported || isMuted || !text.trim()) return;
+    (text: string, onDone?: () => void) => {
+      if (!isSupported || isMuted || !text.trim()) {
+        onDone?.();
+        return;
+      }
 
       const spokenText = cleanTextForSpeech(text);
-      if (!spokenText) return;
+      if (!spokenText) {
+        onDone?.();
+        return;
+      }
 
       try {
+        if (utteranceRef.current) {
+          utteranceRef.current.onstart = null;
+          utteranceRef.current.onend = null;
+          utteranceRef.current.onerror = null;
+          utteranceRef.current.onboundary = null;
+        }
         window.speechSynthesis.cancel();
 
         const utterance = new SpeechSynthesisUtterance(spokenText);
         utterance.lang = lang;
-        utterance.rate = rate;
+        utterance.rate = rateRef.current;  // always use current speed
         utterance.pitch = pitch;
 
         const availableVoices = voicesRef.current.length > 0 ? voicesRef.current : window.speechSynthesis.getVoices();
@@ -196,9 +314,13 @@ export function useSpeechSynthesis(
         utterance.onend = () => {
           setIsSpeaking(false);
           onEndRef.current?.();
+          onDone?.();
         };
-        utterance.onerror = () => {
+        utterance.onerror = (e: SpeechSynthesisErrorEvent) => {
           setIsSpeaking(false);
+          if (e.error !== "canceled" && e.error !== "interrupted") {
+            onDone?.();
+          }
         };
         utterance.onboundary = (e) => {
           onBoundaryRef.current?.(e);
@@ -208,9 +330,10 @@ export function useSpeechSynthesis(
         window.speechSynthesis.speak(utterance);
       } catch {
         setIsSpeaking(false);
+        onDone?.();
       }
     },
-    [isSupported, isMuted, lang, rate, pitch, pickBestIndonesianVoice]
+    [isSupported, isMuted, lang, pitch, pickBestIndonesianVoice]
   );
 
   const pause = useCallback(() => {
@@ -227,6 +350,12 @@ export function useSpeechSynthesis(
 
   const cancel = useCallback(() => {
     if (!isSupported) return;
+    if (utteranceRef.current) {
+      utteranceRef.current.onstart = null;
+      utteranceRef.current.onend = null;
+      utteranceRef.current.onerror = null;
+      utteranceRef.current.onboundary = null;
+    }
     window.speechSynthesis.cancel();
     setIsSpeaking(false);
   }, [isSupported]);
@@ -248,6 +377,12 @@ export function useSpeechSynthesis(
     }
   }, [isMuted]);
 
+  const playStatusEarcon = useCallback((status: string) => {
+    if (!isMuted) {
+      playStatusEarconTone(status);
+    }
+  }, [isMuted]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -263,10 +398,13 @@ export function useSpeechSynthesis(
     isMuted,
     toggleMute,
     selectedVoiceName,
+    ttsRate,
+    setTtsRate,
     speak,
     pause,
     resume,
     cancel,
     playChime,
+    playStatusEarcon,
   };
 }

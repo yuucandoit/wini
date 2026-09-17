@@ -22,12 +22,18 @@ from backend.services.sectors_service import (
     fetch_company_fundamentals,
     extract_metrics,
     extract_company_info,
+    extract_quarterly_history,
 )
 from backend.services.news_service import (
     fetch_news,
     summarize_news_sentiment,
 )
-from backend.scoring import calculate_health_score, calculate_comparative_score
+from backend.scoring import (
+    calculate_health_score,
+    calculate_comparative_score,
+    calculate_quarterly_trend,
+    simulate_portfolio,
+)
 from backend.optimizer import optimize_for_llm
 from backend.disclaimers import get_disclaimer
 from backend.agent.memory import get_memory
@@ -86,12 +92,11 @@ async def _call_llm(
     )
     messages.append({"role": "user", "content": full_user_message})
 
-    payload = {
-        "model": settings.OPENROUTER_MODEL,
-        "messages": messages,
-        "max_tokens": 1024,
-        "temperature": 0.3,  # Low temperature for factual consistency
-    }
+    # List of models to try in sequence if one fails or returns empty/429
+    models_to_try = [settings.OPENROUTER_MODEL]
+    for fallback in ["nvidia/nemotron-3.5-lightning:free", "openrouter/free"]:
+        if fallback not in models_to_try:
+            models_to_try.append(fallback)
 
     headers = {
         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
@@ -99,38 +104,51 @@ async def _call_llm(
         "HTTP-Referer": "https://wini-ai.app",
         "X-Title": "WINI AI Investment Analyst",
     }
-
     url = f"{settings.OPENROUTER_BASE_URL}/chat/completions"
 
-    try:
-        async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+    import re
 
-        choices = data.get("choices", [])
-        if choices:
-            raw_content = choices[0].get("message", {}).get("content", "")
-            # Clean thinking tags from reasoning models
-            import re
-            cleaned_content = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL)
-            cleaned_content = re.sub(r"^Here's a thinking process:.*?\n\n", "", cleaned_content, flags=re.DOTALL | re.IGNORECASE)
-            return cleaned_content.strip()
+    for model_name in models_to_try:
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "max_tokens": 1200,
+            "temperature": 0.3,
+        }
 
-        logger.warning("LLM returned no choices")
-        return _fallback_narrative()
+        try:
+            async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+                response = await client.post(url, json=payload, headers=headers)
+                if response.status_code != 200:
+                    logger.warning(f"Model {model_name} HTTP {response.status_code}: {response.text[:120]}")
+                    continue
+                data = response.json()
 
-    except httpx.HTTPStatusError as e:
-        logger.error(f"LLM API error {e.response.status_code}: {e.response.text}")
-        return _fallback_narrative()
+            choices = data.get("choices", [])
+            if choices:
+                msg = choices[0].get("message", {}) or {}
+                # Extract text from content or reasoning (for thinking/reasoning models)
+                raw_content = msg.get("content") or msg.get("reasoning") or choices[0].get("text") or ""
+                if not isinstance(raw_content, str):
+                    raw_content = str(raw_content or "")
 
-    except httpx.TimeoutException:
-        logger.error("LLM API request timed out")
-        return _fallback_narrative()
+                # Clean thinking tags from reasoning models
+                cleaned_content = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL)
+                cleaned_content = re.sub(r"^Here's a thinking process:.*?\n\n", "", cleaned_content, flags=re.DOTALL | re.IGNORECASE)
+                cleaned_content = cleaned_content.strip()
 
-    except Exception as e:
-        logger.error(f"Unexpected LLM error: {e}")
-        return _fallback_narrative()
+                if cleaned_content:
+                    return cleaned_content
+
+            logger.warning(f"Model {model_name} returned empty content, trying fallback model...")
+
+        except httpx.TimeoutException:
+            logger.warning(f"Model {model_name} timed out after {LLM_TIMEOUT}s, trying fallback model...")
+        except Exception as e:
+            logger.warning(f"Model {model_name} error: {e}, trying fallback model...")
+
+    logger.error("All OpenRouter candidate models failed or returned empty content.")
+    return _fallback_narrative()
 
 
 def _fallback_narrative() -> str:
@@ -249,6 +267,58 @@ async def analyze(
         if score_objects:
             comparative_summary = calculate_comparative_score(score_objects)
 
+    # --- Phase 2b: Historical Quarterly Trend (if query asks for trend/quarters) ---
+    historical_trend = None
+    lower_query = user_query.lower()
+    is_trend_query = any(k in lower_query for k in ["tren", "kuartal", "quarter", "historis", "perkembangan"])
+    if is_trend_query and company_data and isinstance(company_data, list) and len(company_data) > 0:
+        primary_comp = company_data[0]
+        sym = primary_comp.get("symbol", "").replace(".JK", "")
+        comp_name = company_infos.get(sym, {}).get("company_name", sym)
+        q_history = extract_quarterly_history(primary_comp)
+        historical_trend = calculate_quarterly_trend(sym, comp_name, q_history)
+
+    # --- Phase 2c: Portfolio Simulation (if query asks for portfolio/simulation/investment) ---
+    portfolio_simulation = None
+    is_portfolio_query = any(k in lower_query for k in ["portofolio", "portfolio", "simulasi", "taruh", "alokasi", "modal"])
+    if is_portfolio_query and len(health_scores) >= 1:
+        from backend.scoring import HealthScoreResult
+        score_objs = {
+            sym: HealthScoreResult(
+                score=d["score"],
+                status=d["status"],
+                metrics_evaluated=d["metrics_evaluated"],
+                metrics_coverage=d["metrics_coverage"],
+                breakdown=d["breakdown"],
+            )
+            for sym, d in health_scores.items()
+            if d.get("metrics_coverage", 0) > 0
+        }
+        if score_objs:
+            import re
+            capital = 10_000_000.0
+            # Extract nominal from query: e.g. "10 juta", "50jt", "10000000"
+            m_juta = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:juta|jt)\b", lower_query)
+            if m_juta:
+                try:
+                    capital = float(m_juta.group(1).replace(",", ".")) * 1_000_000.0
+                except ValueError:
+                    pass
+            else:
+                m_num = re.search(r"\b(\d{6,12})\b", lower_query)
+                if m_num:
+                    try:
+                        capital = float(m_num.group(1))
+                    except ValueError:
+                        pass
+
+            comp_names = {sym: company_infos.get(sym, {}).get("company_name", sym) for sym in score_objs}
+            portfolio_simulation = simulate_portfolio(
+                ticker_scores=score_objs,
+                company_names=comp_names,
+                total_capital=capital,
+            )
+
     # --- Phase 3: News sentiment ---
     news_sentiment = summarize_news_sentiment(news_data)
 
@@ -258,10 +328,17 @@ async def analyze(
         for sym, d in health_scores.items()
     }
 
+    # Add trend and portfolio metadata to context string if present
+    extra_context = {}
+    if historical_trend:
+        extra_context["historical_trend"] = historical_trend
+    if portfolio_simulation:
+        extra_context["portfolio_simulation"] = portfolio_simulation
+
     context_str = optimize_for_llm(
         company_data=company_data if not isinstance(company_data, Exception) else None,
         news_data=news_data if not isinstance(news_data, Exception) else None,
-        scores=scores_for_llm,
+        scores={**scores_for_llm, **extra_context},
     )
 
     narrative = await _call_llm(
@@ -280,6 +357,8 @@ async def analyze(
         "comparative_summary": comparative_summary,
         "company_info": company_infos,
         "news_sentiment": news_sentiment,
+        "historical_trend": historical_trend,
+        "portfolio_simulation": portfolio_simulation,
         "narrative": narrative,
         "disclaimer": get_disclaimer(),
         "session_id": session_id,

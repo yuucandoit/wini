@@ -2,7 +2,15 @@
 // WINI AI Frontend — API Client
 // ============================================================
 
-import type { AnalysisResult, ComparisonMetric, ComparisonResult, HealthCategory, HealthScore } from "./types";
+import type {
+  AnalysisResult,
+  ComparisonMetric,
+  ComparisonResult,
+  HealthCategory,
+  HealthScore,
+  HistoricalTrend,
+  PortfolioSimulation,
+} from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -54,6 +62,8 @@ interface BackendAnalyzeResponse {
     overall_sentiment: string;
     key_headlines: Array<{ title: string; sentiment: string }>;
   };
+  historical_trend?: any;
+  portfolio_simulation?: any;
   narrative: string;
   disclaimer: string;
   session_id: string;
@@ -126,6 +136,7 @@ const MOCK_COMPARISON_RESULT: AnalysisResult = {
 // ----------------------------------------------------------
 
 function toHealthCategory(status: string): HealthCategory {
+  if (status === "SANGAT SEHAT") return "SANGAT SEHAT";
   if (status === "SEHAT") return "SEHAT";
   if (status === "WASPADA") return "WASPADA";
   return "BERISIKO TINGGI";
@@ -153,6 +164,53 @@ function mapBackendToFrontend(data: BackendAnalyzeResponse, query: string): Anal
   const symbols = data.tickers_analyzed;
   const isComparison = symbols.length > 1;
 
+  // Map historical trend if present
+  let historicalTrend: HistoricalTrend | null = null;
+  if (data.historical_trend && data.historical_trend.points) {
+    const ht = data.historical_trend;
+    historicalTrend = {
+      symbol: ht.symbol,
+      companyName: ht.company_name,
+      points: (ht.points || []).map((p: any) => ({
+        quarter: p.quarter,
+        score: p.score,
+        status: toHealthCategory(p.status),
+        der: p.der,
+        roe: p.roe,
+        pe: p.pe,
+      })),
+      direction: ht.direction,
+      delta: ht.delta,
+      earlyWarning: ht.early_warning,
+      summary: ht.summary,
+    };
+  }
+
+  // Map portfolio simulation if present
+  let portfolio: PortfolioSimulation | null = null;
+  if (data.portfolio_simulation && data.portfolio_simulation.allocations) {
+    const ps = data.portfolio_simulation;
+    portfolio = {
+      totalCapital: ps.total_capital,
+      weightedScore: ps.weighted_score,
+      status: toHealthCategory(ps.status),
+      allocations: (ps.allocations || []).map((a: any) => ({
+        symbol: a.symbol,
+        name: a.name,
+        weight: a.weight,
+        nominal: a.nominal,
+        score: a.score,
+        status: toHealthCategory(a.status),
+        suggested_weight: a.suggested_weight,
+        suggested_nominal: a.suggested_nominal,
+      })),
+      weakestStock: ps.weakest_stock,
+      strongestStock: ps.strongest_stock,
+      rebalancingAdvice: ps.rebalancing_advice,
+      projectedScoreAfterRebalance: ps.projected_score_after_rebalance,
+    };
+  }
+
   if (!isComparison && symbols.length === 1) {
     const sym = symbols[0];
     const hs = data.health_scores[sym];
@@ -171,6 +229,8 @@ function mapBackendToFrontend(data: BackendAnalyzeResponse, query: string): Anal
       transcript: `${data.narrative}\n\n${data.disclaimer}`,
       healthScore,
       comparison: null,
+      historicalTrend,
+      portfolio,
       query,
     };
   }
@@ -253,6 +313,8 @@ function mapBackendToFrontend(data: BackendAnalyzeResponse, query: string): Anal
     transcript: `${data.narrative}\n\n${data.disclaimer}`,
     healthScore: null,
     comparison,
+    historicalTrend,
+    portfolio,
     query,
   };
 }

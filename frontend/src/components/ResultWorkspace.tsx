@@ -6,13 +6,16 @@ import AudioPlayer from "@/components/AudioPlayer";
 import HealthScoreCard from "@/components/HealthScoreCard";
 import ComparisonTable from "@/components/ComparisonTable";
 import FormattedMarkdown from "@/components/FormattedMarkdown";
+import AccessibleTrendChart from "@/components/AccessibleTrendChart";
+import PortfolioSimulatorCard from "@/components/PortfolioSimulatorCard";
 
 interface ResultWorkspaceProps {
   result: AnalysisResult;
   onNewQuery: () => void;
+  onSpeak?: (text: string) => void;
 }
 
-export default function ResultWorkspace({ result, onNewQuery }: ResultWorkspaceProps) {
+export default function ResultWorkspace({ result, onNewQuery, onSpeak }: ResultWorkspaceProps) {
   return (
     <section aria-label="Hasil analisis emiten" className="flex flex-col gap-8 w-full max-w-4xl mx-auto animate-fade-in">
       <div className="bg-brand-card border border-brand-border rounded-2xl p-6 shadow-xl">
@@ -27,11 +30,21 @@ export default function ResultWorkspace({ result, onNewQuery }: ResultWorkspaceP
 
       <AudioPlayer text={result.summary} />
 
-      {result.healthScore && (
+      {/* Historical Quarterly Trend Chart */}
+      {result.historicalTrend && (
+        <AccessibleTrendChart trend={result.historicalTrend} onSpeak={onSpeak} />
+      )}
+
+      {/* Portfolio Simulation Card */}
+      {result.portfolio && (
+        <PortfolioSimulatorCard portfolio={result.portfolio} onSpeak={onSpeak} />
+      )}
+
+      {result.healthScore && !result.historicalTrend && !result.portfolio && (
         <HealthScoreCard healthScore={result.healthScore} />
       )}
 
-      {result.comparison && (
+      {result.comparison && !result.portfolio && (
         <ComparisonTable comparison={result.comparison} />
       )}
 
