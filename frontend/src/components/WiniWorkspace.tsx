@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { AnalysisResult } from "@/lib/types";
-import { analyzeStock } from "@/lib/api";
+import { analyzeStock, isMockModeActive, setMockModeActive } from "@/lib/api";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useAudioSpectrum } from "@/hooks/useAudioSpectrum";
@@ -63,6 +63,7 @@ export default function WiniWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [isMicActive, setIsMicActive] = useState<boolean>(false);
   const [glossaryEntry, setGlossaryEntry] = useState<GlossaryEntry | null>(null);
+  const [isMockMode, setIsMockMode] = useState<boolean>(true);
 
   const textInputRef = useRef<HTMLInputElement>(null);
   const lastKeyTimeRef = useRef<number>(0);
@@ -71,7 +72,7 @@ export default function WiniWorkspace() {
   const phaseRef = useRef<string>("greeting");
   const isSpeakingRef = useRef<boolean>(false);
   const lastWakeWordHandledTimeRef = useRef<number>(0);
-  const hasMountedGreetingRef = useRef<boolean>(false);
+  const hasGreetingSpokenRef = useRef<boolean>(false);
   const startListeningRef = useRef<() => void>(() => {});
   const stopListeningRef = useRef<() => void>(() => {});
   const resetTranscriptRef = useRef<() => void>(() => {});
@@ -88,11 +89,34 @@ export default function WiniWorkspace() {
     cancel: cancelSpeech,
     playChime,
     playStatusEarcon,
+    unlockAudio,
   } = useSpeechSynthesis({
     lang: "id-ID",
     rate: 1.0,
     pitch: 1.02,
   });
+
+  // Synchronize mock mode state from localStorage/env
+  useEffect(() => {
+    setIsMockMode(isMockModeActive());
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent<boolean>;
+      setIsMockMode(customEvent.detail);
+    };
+    window.addEventListener("wini_mock_mode_changed", handler);
+    return () => window.removeEventListener("wini_mock_mode_changed", handler);
+  }, []);
+
+  const handleToggleMockMode = useCallback(() => {
+    const next = !isMockMode;
+    setIsMockMode(next);
+    setMockModeActive(next);
+    const msg = next
+      ? "Mode Mock Data aktif. Kuota API Sectors dihemat seratus persen."
+      : "Mode API Nyata aktif. Menggunakan koneksi backend dan Sectors API.";
+    setCaptionText(msg);
+    speak(msg);
+  }, [isMockMode, speak]);
 
   // Keep refs updated for event listeners & closures
   useEffect(() => {
@@ -381,10 +405,13 @@ export default function WiniWorkspace() {
 
   // Initial greeting audio playback
   const triggerGreeting = useCallback(() => {
+    unlockAudio();
     playChime("start");
     stopListeningRef.current();
     stopSpectrum();
     setIsMicActive(false);
+    hasGreetingSpokenRef.current = true;
+
     speak(GREETING_SPOKEN, () => {
       // Once assistant completes greeting speech, open mic in greeting phase to listen for wake word
       setTimeout(() => {
@@ -396,19 +423,39 @@ export default function WiniWorkspace() {
         }
       }, 200);
     });
-  }, [playChime, speak, stopSpectrum, startSpectrum]);
+  }, [playChime, speak, stopSpectrum, startSpectrum, unlockAudio]);
 
   useEffect(() => {
-    // Speak greeting audio ONCE when landing on greeting screen
-    if (!hasMountedGreetingRef.current) {
-      hasMountedGreetingRef.current = true;
-      const timer = setTimeout(() => {
+    // 1. Attempt autoplay greeting after a short delay (works if browser allows autoplay)
+    const timer = setTimeout(() => {
+      if (!hasGreetingSpokenRef.current) {
         triggerGreeting();
-      }, 600);
+      }
+    }, 400);
 
-      return () => clearTimeout(timer);
-    }
-  }, [triggerGreeting]);
+    // 2. Autoplay Policy Fallback for Blind Users:
+    // If the browser blocks automatic audio before user interaction, the very first user gesture
+    // (pressing ANY key, clicking, or tapping the screen anywhere) immediately unlocks audio & triggers greeting!
+    const handleFirstGesture = () => {
+      if (!hasGreetingSpokenRef.current) {
+        unlockAudio();
+        triggerGreeting();
+      }
+    };
+
+    window.addEventListener("keydown", handleFirstGesture, { passive: true });
+    window.addEventListener("pointerdown", handleFirstGesture, { passive: true });
+    window.addEventListener("touchstart", handleFirstGesture, { passive: true });
+    window.addEventListener("click", handleFirstGesture, { passive: true });
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("keydown", handleFirstGesture);
+      window.removeEventListener("pointerdown", handleFirstGesture);
+      window.removeEventListener("touchstart", handleFirstGesture);
+      window.removeEventListener("click", handleFirstGesture);
+    };
+  }, [triggerGreeting, unlockAudio]);
 
   // Activate microphone with immediate chime feedback
   const activateMicrophone = useCallback(() => {
@@ -674,6 +721,11 @@ export default function WiniWorkspace() {
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-700/50">
                   Aksesibel Inklusif
                 </span>
+                {isMockMode && (
+                  <span className="hidden md:inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-700/50">
+                    ⚡ Mock Data
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 font-medium tracking-wide">
                 Analis Investasi Saham Cerdas &amp; Ramah Tunanetra
@@ -683,6 +735,33 @@ export default function WiniWorkspace() {
 
           {/* Right Accessibility Utilities Bar */}
           <nav aria-label="Alat Aksesibilitas Cepat" className="flex items-center space-x-2 sm:space-x-3">
+            {/* Interactive Data Source Switch Button (Mock vs Real API) */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isMockMode}
+              onClick={handleToggleMockMode}
+              aria-label={`Alihkan sumber data: saat ini ${
+                isMockMode ? "Mode Mock Data aktif, kuota API 100% hemat" : "Mode API Nyata aktif"
+              }. Tekan tombol ini untuk beralih.`}
+              title={isMockMode ? "Klik untuk beralih ke Mode API Nyata" : "Klik untuk beralih ke Mode Mock Data (Hemat Kuota)"}
+              className={`focus-accessible px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all flex items-center gap-1.5 shadow-sm ${
+                isMockMode
+                  ? "bg-amber-950/80 border-amber-500/70 text-amber-300 hover:bg-amber-900/90"
+                  : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+              }`}
+            >
+              <span
+                aria-hidden="true"
+                className={`w-2 h-2 rounded-full ${
+                  isMockMode ? "bg-amber-400 animate-pulse" : "bg-cyan-400"
+                }`}
+              />
+              <span className="font-mono text-[11px]">
+                {isMockMode ? "⚡ Mock (0 Quota)" : "🌐 API Nyata"}
+              </span>
+            </button>
+
             {/* Activation Helper Badge */}
             <span
               className={`hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${

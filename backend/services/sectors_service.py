@@ -133,6 +133,33 @@ async def fetch_company_report(symbol: str) -> dict[str, Any] | None:
         return cached
 
     settings = get_settings()
+    if settings.USE_MOCK_DATA:
+        mock_companies = _load_mock_companies()
+        for item in mock_companies:
+            if _normalize_ticker(item.get("symbol", "")) == clean_sym:
+                return item
+        return {
+            "symbol": f"{clean_sym}.JK",
+            "company_name": f"PT {clean_sym} Indonesia Tbk",
+            "sector": "Keuangan",
+            "sub_sector": "Perbankan",
+            "der_mrq": 1.1,
+            "dar_mrq": 0.45,
+            "roe_ttm": 0.15,
+            "roa_ttm": 0.05,
+            "pe_ttm": 12.5,
+            "pb_mrq": 1.8,
+            "market_cap": 25000000000000.0,
+            "last_close_price": 4200.0,
+            "query_values": {
+                "der_mrq": 1.1,
+                "dar_mrq": 0.45,
+                "roe_ttm": 0.15,
+                "roa_ttm": 0.05,
+                "pe_ttm": 12.5,
+            },
+        }
+
     url = f"{settings.SECTORS_BASE_URL}/v2/company/report/{clean_sym}/"
     headers = {
         "Authorization": settings.SECTORS_API_KEY,
@@ -203,11 +230,31 @@ async def fetch_company_fundamentals(
                     found = True
                     break
             if not found:
-                logger.warning(f"Ticker {sym} not found in mock fixtures")
+                logger.info(f"USE_MOCK_DATA: Synthesizing fixture for {sym} (0 API credits)")
+                matched.append({
+                    "symbol": f"{sym}.JK",
+                    "company_name": f"PT {sym} Indonesia Tbk",
+                    "sector": "Keuangan",
+                    "sub_sector": "Perbankan",
+                    "der_mrq": 1.1,
+                    "dar_mrq": 0.45,
+                    "roe_ttm": 0.15,
+                    "roa_ttm": 0.05,
+                    "pe_ttm": 12.5,
+                    "pb_mrq": 1.8,
+                    "market_cap": 25000000000000.0,
+                    "last_close_price": 4200.0,
+                    "query_values": {
+                        "der_mrq": 1.1,
+                        "dar_mrq": 0.45,
+                        "roe_ttm": 0.15,
+                        "roa_ttm": 0.05,
+                        "pe_ttm": 12.5,
+                    },
+                })
 
-        if matched:
-            await cache.set("financial", cache_key, matched)
-            return matched
+        await cache.set("financial", cache_key, matched)
+        return matched
 
     # 3. Live API Fetching (Parallel fetch per ticker for highest accuracy)
     results: list[dict[str, Any]] = []

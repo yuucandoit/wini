@@ -43,6 +43,47 @@ export interface UseSpeechSynthesisReturn {
   playChime: (type?: "start" | "success" | "stop") => void;
   /** Play status-specific earcon melody based on health score tier */
   playStatusEarcon: (status: string) => void;
+  /** Manually unlock and resume AudioContext and SpeechSynthesis on user gesture */
+  unlockAudio: () => void;
+}
+
+/**
+ * Play a soothing, harmonic Web Audio API chime (Earcon).
+ * Avoids harsh beeps and produces a warm, accessible auditory cue.
+ */
+let _sharedAudioCtx: AudioContext | null = null;
+
+export function getAudioContext(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  const AudioContextClass =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextClass) return null;
+
+  if (!_sharedAudioCtx || _sharedAudioCtx.state === "closed") {
+    try {
+      _sharedAudioCtx = new AudioContextClass();
+    } catch {
+      return null;
+    }
+  }
+  if (_sharedAudioCtx.state === "suspended") {
+    _sharedAudioCtx.resume().catch(() => {});
+  }
+  return _sharedAudioCtx;
+}
+
+export function unlockAudio(): void {
+  if (typeof window === "undefined") return;
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === "suspended") {
+    ctx.resume().catch(() => {});
+  }
+  if ("speechSynthesis" in window) {
+    try {
+      window.speechSynthesis.resume();
+    } catch {}
+  }
 }
 
 /**
@@ -50,12 +91,10 @@ export interface UseSpeechSynthesisReturn {
  * Avoids harsh beeps and produces a warm, accessible auditory cue.
  */
 function playToneChime(type: "start" | "success" | "stop" = "start") {
-  if (typeof window === "undefined") return;
-  const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  if (!AudioContextClass) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
 
   try {
-    const ctx = new AudioContextClass();
     const now = ctx.currentTime;
 
     const osc = ctx.createOscillator();
@@ -105,9 +144,8 @@ function playToneChime(type: "start" | "success" | "stop" = "start") {
  * BERISIKO TINGGI: C4→B3→A3    (descending chromatic, somber/dramatic)
  */
 function playStatusEarconTone(status: string) {
-  if (typeof window === "undefined") return;
-  const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  if (!AudioContextClass) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
 
   // Note frequencies (Hz)
   const NOTE: Record<string, number> = {
@@ -154,7 +192,6 @@ function playStatusEarconTone(status: string) {
   }
 
   try {
-    const ctx = new AudioContextClass();
     const now = ctx.currentTime;
     const masterGain = ctx.createGain();
     masterGain.gain.setValueAtTime(0.10, now);
@@ -297,6 +334,9 @@ export function useSpeechSynthesis(
           utteranceRef.current.onboundary = null;
         }
         window.speechSynthesis.cancel();
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
 
         const utterance = new SpeechSynthesisUtterance(spokenText);
         utterance.lang = lang;
@@ -328,6 +368,9 @@ export function useSpeechSynthesis(
 
         utteranceRef.current = utterance;
         window.speechSynthesis.speak(utterance);
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
       } catch {
         setIsSpeaking(false);
         onDone?.();
@@ -406,5 +449,6 @@ export function useSpeechSynthesis(
     cancel,
     playChime,
     playStatusEarcon,
+    unlockAudio,
   };
 }

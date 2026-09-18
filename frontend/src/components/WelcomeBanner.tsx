@@ -28,11 +28,16 @@ export default function WelcomeBanner({
         return;
       }
 
+      // If assistant is not speaking, any keypress triggers spoken guidance immediately
+      if (!isSpeaking && onReplayAudio) {
+        onReplayAudio();
+      }
+
       const now = Date.now();
       const diff = now - lastKeyTimeRef.current;
 
       if (diff > 50 && diff < 800) {
-        // Any key pressed twice in quick succession!
+        // Any key pressed twice in quick succession activates directly!
         e.preventDefault();
         lastKeyTimeRef.current = 0;
         setKeyPressCount(2);
@@ -52,6 +57,11 @@ export default function WelcomeBanner({
       const target = e.target as HTMLElement | null;
       if (target?.tagName === "BUTTON" && !target.classList.contains("main-card")) {
         return;
+      }
+
+      // If assistant is not speaking, any screen tap triggers spoken guidance immediately
+      if (!isSpeaking && onReplayAudio) {
+        onReplayAudio();
       }
 
       const now = Date.now();
@@ -82,7 +92,7 @@ export default function WelcomeBanner({
       window.removeEventListener("touchend", handlePointerUp);
       window.removeEventListener("dblclick", handleDblClick);
     };
-  }, [onActivate]);
+  }, [onActivate, onReplayAudio, isSpeaking]);
 
   return (
     <div
@@ -92,6 +102,10 @@ export default function WelcomeBanner({
       tabIndex={0}
       className="fixed inset-0 z-50 flex flex-col items-center justify-between bg-brand-bg text-slate-100 p-6 md:p-12 animate-fade-in select-none focus:outline-none overflow-y-auto"
     >
+      {/* Screen Reader Immediate Live Announcement for Blind Users */}
+      <div role="status" aria-live="assertive" aria-atomic="true" className="sr-only">
+        Selamat datang di WINI AI, asisten investasi saham inklusif. Tekan Spasi, Enter, atau sentuh layar di mana saja untuk mengaktifkan panduan audio dan mikrofon.
+      </div>
       {/* Top Brand Bar */}
       <div className="w-full max-w-4xl flex items-center justify-between">
         <div className="flex items-center space-x-3">
