@@ -1,5 +1,9 @@
 # WINI AI — Autonomous Investment Analyst & Comparative Stock Screener
-### *Inclusive & Accessible Edition (Ramah Tunanetra & Tunarungu — WCAG 2.2 AAA)*
+### *Track: AI Agents & Assistants | Inclusive Edition (WCAG 2.2 AAA)*
+
+> 🏆 **Kepatuhan Penuh Track Hackathon: "AI Agents & Assistants"**  
+> WINI AI bukan sekadar chatbot atau prompt wrapper. WINI AI adalah **Autonomous Multi-Tool AI Agent** dengan *Cognitive Loop* lengkap (Perception, Planning, Tool Use, Guardrails, & Multi-Modal Action), dilengkapi *Agent Execution Trace* transparan, memori percakapan multi-turn, dan sonifikasi audio grafik Web Audio API bagi penyandang disabilitas.  
+> 📖 Baca dokumen lengkap evaluasi juri di: [HACKATHON_TRACK_ALIGNMENT.md](HACKATHON_TRACK_ALIGNMENT.md)
 
 WINI AI adalah asisten analis investasi saham Bursa Efek Indonesia (IDX) yang otonom, cerdas, dan dirancang khusus dengan standar aksesibilitas inklusif tingkat tinggi bagi penyandang disabilitas (*dual-sensory accessibility*).
 

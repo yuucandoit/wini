@@ -92,6 +92,28 @@ export interface PortfolioSimulation {
   projectedScoreAfterRebalance?: number;
 }
 
+/** A single tool execution step by the AI Agent */
+export interface AgentToolStep {
+  tool: string;
+  category: "DATA_RETRIEVAL" | "QUANTITATIVE_ANALYSIS" | "SYNTHESIS" | "GUARDRAIL";
+  duration_ms: number;
+  status: "SUCCESS" | "FALLBACK" | "ERROR";
+  summary: string;
+}
+
+/** Full autonomous telemetry and trace of the AI Agent */
+export interface AgentExecutionTrace {
+  goal: string;
+  session_id: string;
+  tools_executed: AgentToolStep[];
+  guardrail_verification: {
+    passed: boolean;
+    rule: string;
+    metrics_evaluated?: number;
+  };
+  total_duration_ms: number;
+}
+
 /** Backend analysis response */
 export interface AnalysisResult {
   /** Natural-language summary of the analysis */
@@ -106,6 +128,8 @@ export interface AnalysisResult {
   historicalTrend?: HistoricalTrend | null;
   /** Portfolio simulation data (if portfolio query) */
   portfolio?: PortfolioSimulation | null;
+  /** Autonomous Agent Execution Trace */
+  agentTrace?: AgentExecutionTrace | null;
   /** Raw query that produced this result */
   query: string;
 }

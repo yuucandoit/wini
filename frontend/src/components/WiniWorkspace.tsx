@@ -12,6 +12,8 @@ import ResultWorkspace from "@/components/ResultWorkspace";
 import GlossaryCard from "@/components/GlossaryCard";
 import { findGlossaryEntry, isGlossaryQuery } from "@/lib/glossary";
 import type { GlossaryEntry } from "@/lib/glossary";
+import { routeVoiceIntent, generateHelpSpokenResponse } from "@/lib/voiceIntentRouter";
+import { playGraphSonification } from "@/components/AccessibleTrendChart";
 
 const GREETING_SPOKEN =
   "Selamat datang di WINI AI. Tekan tombol Mulai atau ucapkan Let's go WINI untuk memulai.";
@@ -76,6 +78,7 @@ export default function WiniWorkspace() {
   const startListeningRef = useRef<() => void>(() => {});
   const stopListeningRef = useRef<() => void>(() => {});
   const resetTranscriptRef = useRef<() => void>(() => {});
+  const handleResetToDashboardRef = useRef<() => void>(() => {});
 
   // Speech synthesis hook with natural Indonesian voice
   const {
@@ -144,98 +147,7 @@ export default function WiniWorkspace() {
     }, 200);
   }, [startSpectrum]);
 
-  // Voice command parser for the results page
-  const handleVoiceCommandOnResults = useCallback((text: string) => {
-    const cleanText = sanitizeSpokenQuery(text);
-    const t = cleanText.toLowerCase().trim();
-
-    // "ulangi" / "ulang lagi" / "baca ulang" → re-speak summary
-    if (t.match(/\b(ulangi|ulang|baca ulang|repeat|ulangi lagi)\b/)) {
-      cancelSpeech();
-      const summary = resultRef.current?.summary;
-      if (summary) {
-        setCaptionText("🔁 Mengulangi ringkasan analisis...");
-        stopListeningRef.current();
-        stopSpectrum();
-        setIsMicActive(false);
-        speak(summary, resumeListeningAfterSpeak);
-      }
-      return;
-    }
-
-    // "utang" / "DER" / "DAR" / "berapa utang" → speak debt metrics
-    if (t.match(/\b(utang|hutang|der|dar|berapa utang|liabilitas|leverage)\b/)) {
-      cancelSpeech();
-      const hs = resultRef.current?.healthScore;
-      if (hs) {
-        const msg = `Skor kesehatan ${hs.symbol}: ${hs.score} dari 100, status ${hs.category}.`;
-        setCaptionText("📊 Membacakan skor kesehatan...");
-        stopListeningRef.current();
-        stopSpectrum();
-        setIsMicActive(false);
-        speak(msg, resumeListeningAfterSpeak);
-      }
-      return;
-    }
-
-    // "kembali" / "baru" / "analisis baru" / "selesai" → back to dashboard
-    if (t.match(/\b(kembali|back|baru|analisis baru|selesai|reset|home|beranda)\b/)) {
-      setCaptionText("↩️ Kembali ke dasbor...");
-      // handleResetToDashboard will be called after this callback returns
-      setTimeout(() => handleResetToDashboard(), 300);
-      return;
-    }
-
-    // "rebalance" / "rebalancing" / "saran alokasi" → speak portfolio rebalancing advice
-    if (t.match(/\b(rebalance|rebalancing|saran alokasi|alokasi|portofolio)\b/)) {
-      const port = resultRef.current?.portfolio;
-      if (port) {
-        cancelSpeech();
-        setCaptionText("⚖️ Membacakan saran rebalancing...");
-        stopListeningRef.current();
-        stopSpectrum();
-        setIsMicActive(false);
-        speak(port.rebalancingAdvice, resumeListeningAfterSpeak);
-        return;
-      }
-    }
-
-    // "tren" / "kuartal" / "grafik" → speak trend summary
-    if (t.match(/\b(tren|kuartal|quarter|grafik|perkembangan)\b/)) {
-      const tr = resultRef.current?.historicalTrend;
-      if (tr) {
-        cancelSpeech();
-        setCaptionText("🗓️ Membacakan ringkasan tren...");
-        stopListeningRef.current();
-        stopSpectrum();
-        setIsMicActive(false);
-        speak(tr.summary, resumeListeningAfterSpeak);
-        return;
-      }
-    }
-
-    // --- Glossary intercept (also works from results page) ---
-    if (isGlossaryQuery(cleanText)) {
-      const entry = findGlossaryEntry(cleanText);
-      if (entry) {
-        cancelSpeech();
-        stopListeningRef.current();
-        stopSpectrum();
-        setIsMicActive(false);
-        setGlossaryEntry(entry);
-        setCaptionText(`📖 ${entry.term}`);
-        speak(`${entry.term}. ${entry.definition} Analogi: ${entry.analogy}`, resumeListeningAfterSpeak);
-        return;
-      }
-    }
-
-    // Any other utterance → treat as new query
-    setCaptionText(`🔍 Menganalisis: "${cleanText}"`);
-    handleSubmitQuery(cleanText);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cancelSpeech, speak, resumeListeningAfterSpeak, stopSpectrum]);
-
-  // Handle final recognized speech — routes differently by phase
+  // Handle final recognized speech — routes intelligently across all phases & features
   const handleFinalSpeech = useCallback((spokenText: string) => {
     // If assistant is actively speaking, discard speech input to avoid audio echo bleed
     if (isSpeakingRef.current) return;
@@ -262,44 +174,23 @@ export default function WiniWorkspace() {
         playChime("success");
         setPhase("dashboard");
         setCaptionText("🎙️ Halo! Mau cek saham apa hari ini?");
-        speak("Halo! Mau cek saham apa hari ini?", () => {
-          setTimeout(() => {
-            resetTranscriptRef.current();
-            startListeningRef.current();
-            startSpectrum();
-            setIsMicActive(true);
-          }, 200);
-        });
+        speak("Halo! Mau cek saham apa hari ini?", resumeListeningAfterSpeak);
         return;
       }
 
       if (phaseRef.current === "dashboard") {
         cancelSpeech();
         playChime("start");
-        setCaptionText("🎙️ Halo! Silakan sebutkan saham yang ingin Anda analisis (contoh: BBCA atau TLKM)...");
-        speak("Halo! Silakan sebutkan kode saham yang ingin Anda analisis, misalnya BBCA atau TLKM.", () => {
-          setTimeout(() => {
-            resetTranscriptRef.current();
-            startListeningRef.current();
-            startSpectrum();
-            setIsMicActive(true);
-          }, 200);
-        });
+        setCaptionText("🎙️ Halo! Silakan sebutkan saham atau fitur yang Anda inginkan...");
+        speak("Halo! Silakan sebutkan kode saham atau fitur yang ingin Anda tuju, misalnya cek BBCA atau lihat top 5 saham.", resumeListeningAfterSpeak);
         return;
       }
 
       if (phaseRef.current === "results") {
         cancelSpeech();
         playChime("start");
-        setCaptionText("🎙️ Halo! Katakan 'ulangi', 'tren', atau sebutkan saham baru...");
-        speak("Halo! Mau analisis saham apa lagi?", () => {
-          setTimeout(() => {
-            resetTranscriptRef.current();
-            startListeningRef.current();
-            startSpectrum();
-            setIsMicActive(true);
-          }, 200);
-        });
+        setCaptionText("🎙️ Halo! Katakan 'tren', 'portofolio', 'ulangi', atau sebutkan saham baru...");
+        speak("Halo! Mau beralih ke fitur apa? Anda bisa cek tren kuartal, simulasi portofolio, atau saham baru.", resumeListeningAfterSpeak);
         return;
       }
       return;
@@ -312,19 +203,71 @@ export default function WiniWorkspace() {
       return;
     }
 
-    // If user asked a real stock question while on the greeting screen, transition to dashboard
+    // If user asked a real question while on the greeting screen, transition to dashboard
     if (phaseRef.current === "greeting") {
       setPhase("dashboard");
     }
 
-    if (phaseRef.current === "results") {
-      // Route to voice command parser instead of starting a brand-new query
-      handleVoiceCommandOnResults(clean);
+    // 3. Smart Non-Hardcoded Intent Routing (Seamless Feature Switching)
+    const route = routeVoiceIntent(clean, {
+      currentResult: resultRef.current,
+      currentPhase: phaseRef.current,
+    });
+
+    // Intent: Bantuan & Panduan Suara
+    if (route.intent === "HELP") {
+      cancelSpeech();
+      stopListeningRef.current();
+      stopSpectrum();
+      setIsMicActive(false);
+      setCaptionText("ℹ️ Panduan Fitur & Perintah Suara WINI AI");
+      speak(route.spokenResponse || generateHelpSpokenResponse(), resumeListeningAfterSpeak);
       return;
     }
 
-    // --- Glossary intercept: "apa itu DER?", "jelaskan ROE", etc. ---
-    if (isGlossaryQuery(clean)) {
+    // Intent: Kembali ke Beranda / Reset Dasbor
+    if (route.intent === "NAVIGATION_HOME") {
+      setCaptionText("↩️ Kembali ke dasbor...");
+      setTimeout(() => handleResetToDashboardRef.current(), 300);
+      return;
+    }
+
+    // Intent: Mengulangi Ringkasan Terakhir
+    if (route.intent === "REPLAY_SUMMARY") {
+      cancelSpeech();
+      stopListeningRef.current();
+      stopSpectrum();
+      setIsMicActive(false);
+      setCaptionText("🔁 Mengulangi ringkasan analisis...");
+      speak(route.spokenResponse || resultRef.current?.summary || "Belum ada ringkasan untuk diulangi.", resumeListeningAfterSpeak);
+      return;
+    }
+
+    // Intent: Memainkan Tangga Nada Sonifikasi Grafik Tren
+    if (route.intent === "PLAY_SONIFICATION") {
+      const points = resultRef.current?.historicalTrend?.points;
+      if (points && points.length > 0) {
+        cancelSpeech();
+        setCaptionText("🎵 Memainkan nada sonifikasi grafik kuartal...");
+        playGraphSonification(points);
+        speak("Memainkan tangga nada audio grafik tren. Nada yang naik menandakan fundamental semakin sehat.", resumeListeningAfterSpeak);
+        return;
+      }
+    }
+
+    // Intent: Membacakan Metrik Spesifik (Utang / Laba / Skor)
+    if (route.intent === "READ_METRIC" && route.spokenResponse) {
+      cancelSpeech();
+      stopListeningRef.current();
+      stopSpectrum();
+      setIsMicActive(false);
+      setCaptionText(`📊 ${route.spokenResponse}`);
+      speak(route.spokenResponse, resumeListeningAfterSpeak);
+      return;
+    }
+
+    // Intent: Kamus Jargon / Glosarium Finansial
+    if (route.intent === "SWITCH_FEATURE_GLOSSARY") {
       const entry = findGlossaryEntry(clean);
       if (entry) {
         cancelSpeech();
@@ -338,10 +281,17 @@ export default function WiniWorkspace() {
       }
     }
 
-    setCaptionText(`"${clean}"`);
-    handleSubmitQuery(clean);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleVoiceCommandOnResults, cancelSpeech, speak, playChime, resumeListeningAfterSpeak, stopSpectrum, startSpectrum]);
+    // Intent: Beralih Fitur (Trend, Portfolio, Screener, Comparison, Single)
+    const targetQ = route.targetQuery || clean;
+    setCaptionText(`🔍 ${route.rationale || targetQ}`);
+    handleSubmitQuery(targetQ);
+  }, [
+    cancelSpeech,
+    speak,
+    playChime,
+    resumeListeningAfterSpeak,
+    stopSpectrum,
+  ]);
 
   // Handle interim live transcript
   const handleInterimSpeech = useCallback((interimText: string) => {
@@ -389,8 +339,8 @@ export default function WiniWorkspace() {
     lang: "id-ID",
     continuous: true,
     interimResults: true,
-    autoRestart: false,
-    confidenceThreshold: 0.60,
+    autoRestart: true,
+    confidenceThreshold: 0.55,
     onResult: handleFinalSpeech,
     onInterim: handleInterimSpeech,
   });
@@ -497,6 +447,7 @@ export default function WiniWorkspace() {
     setGlossaryEntry(null);
     setCaptionText("Pencet tombol apa saja 2x atau klik 2x untuk membuka mikrofon.");
   }, [cancelSpeech, stopListening, stopSpectrum]);
+  handleResetToDashboardRef.current = handleResetToDashboard;
 
   // Global double-keypress (ANY key) and double-click listener
   useEffect(() => {

@@ -13,7 +13,7 @@ interface AccessibleTrendChartProps {
  * Frequency in Hz scales linearly with the score (220 Hz for 0 to 620 Hz for 100).
  * Ascending pitch = Improving, Descending pitch = Deteriorating.
  */
-function playGraphSonification(points: QuarterlyPoint[]) {
+export function playGraphSonification(points: QuarterlyPoint[]) {
   if (typeof window === 'undefined') return;
   const AudioContextClass =
     window.AudioContext ||

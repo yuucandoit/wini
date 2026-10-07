@@ -4,6 +4,7 @@
 
 import type {
   AnalysisResult,
+  AgentExecutionTrace,
   ComparisonMetric,
   ComparisonResult,
   HealthCategory,
@@ -67,6 +68,7 @@ interface BackendAnalyzeResponse {
   narrative: string;
   disclaimer: string;
   session_id: string;
+  agent_trace?: AgentExecutionTrace | null;
 }
 
 // ============================================================
@@ -138,6 +140,72 @@ const MOCK_COMPARISON: ComparisonResult = {
   ],
 };
 
+function createMockAgentTrace(tickers: string[], hasTrend = false, hasPort = false): AgentExecutionTrace {
+  const steps: AgentExecutionTrace["tools_executed"] = [
+    {
+      tool: "sectors_fundamentals",
+      category: "DATA_RETRIEVAL",
+      duration_ms: 135,
+      status: "SUCCESS",
+      summary: `Mengambil data neraca & valuasi resmi untuk ${tickers.join(", ")} dari Sectors Financial API v2`,
+    },
+    {
+      tool: "market_intelligence_news",
+      category: "DATA_RETRIEVAL",
+      duration_ms: 95,
+      status: "SUCCESS",
+      summary: `Mengumpulkan 5 artikel berita pasar modal terverifikasi untuk analisis sentimen emiten`,
+    },
+    {
+      tool: "deterministic_health_scorer",
+      category: "QUANTITATIVE_ANALYSIS",
+      duration_ms: 2,
+      status: "SUCCESS",
+      summary: `Menghitung skor kesehatan matematis 100 poin (DER, ROE, ROA, DAR, PE) untuk ${tickers.join(", ")}`,
+    },
+  ];
+
+  if (hasTrend) {
+    steps.push({
+      tool: "historical_trend_analyzer",
+      category: "QUANTITATIVE_ANALYSIS",
+      duration_ms: 4,
+      status: "SUCCESS",
+      summary: `Mengevaluasi kurva lintasan fundamental 4 kuartal (Status: MEMBAIK)`,
+    });
+  }
+
+  if (hasPort) {
+    steps.push({
+      tool: "portfolio_rebalancer",
+      category: "QUANTITATIVE_ANALYSIS",
+      duration_ms: 5,
+      status: "SUCCESS",
+      summary: `Mengoptimasi alokasi modal dan rekomendasi pembobotan ulang portofolio cerdas`,
+    });
+  }
+
+  steps.push({
+    tool: "llm_narrative_synthesizer",
+    category: "SYNTHESIS",
+    duration_ms: 410,
+    status: "SUCCESS",
+    summary: `Mensintesis wawasan naratif ramah vokal & screen-reader berdasarkan data kuantitatif`,
+  });
+
+  return {
+    goal: `Analisis fundamental otonom untuk emiten ${tickers.join(", ")}`,
+    session_id: "mock-session-" + Date.now(),
+    tools_executed: steps,
+    guardrail_verification: {
+      passed: true,
+      rule: "Deterministic Financial Math Guardrail (0% Hallucination)",
+      metrics_evaluated: tickers.length,
+    },
+    total_duration_ms: steps.reduce((acc, s) => acc + s.duration_ms, 0),
+  };
+}
+
 const MOCK_SINGLE_RESULT: AnalysisResult = {
   summary:
     "BBCA menunjukkan fundamental yang sangat kuat dengan ROE 21.3% dan pertumbuhan laba bersih konsisten selama 5 tahun terakhir. Rasio P/E di 24.5x mencerminkan valuasi premium yang wajar mengingat kualitas aset dan manajemen risiko yang unggul. Rasio kredit bermasalah (NPL) tetap rendah di 1.2%, menunjukkan kualitas portofolio pinjaman yang sehat. Secara keseluruhan, BBCA layak mendapat skor kesehatan 88 dari 100.",
@@ -147,6 +215,7 @@ const MOCK_SINGLE_RESULT: AnalysisResult = {
   comparison: null,
   historicalTrend: null,
   portfolio: null,
+  agentTrace: createMockAgentTrace(["BBCA"]),
   query: "analisis BBCA",
 };
 
@@ -159,6 +228,7 @@ const MOCK_COMPARISON_RESULT: AnalysisResult = {
   comparison: MOCK_COMPARISON,
   historicalTrend: null,
   portfolio: null,
+  agentTrace: createMockAgentTrace(["BBCA", "BBRI"]),
   query: "bandingkan BBCA dan BBRI",
 };
 
@@ -202,6 +272,7 @@ const MOCK_COMPARISON_TLKM_ISAT: AnalysisResult = {
   },
   historicalTrend: null,
   portfolio: null,
+  agentTrace: createMockAgentTrace(["TLKM", "ISAT"]),
   query: "bandingkan TLKM dan ISAT",
 };
 
@@ -234,6 +305,7 @@ const MOCK_TREND_RESULT: AnalysisResult = {
     ],
   },
   portfolio: null,
+  agentTrace: createMockAgentTrace(["ADRO"], true, false),
   query: "tren 4 kuartal ADRO",
 };
 
@@ -293,6 +365,7 @@ const MOCK_PORTFOLIO_RESULT: AnalysisResult = {
       "Disarankan melakukan rebalancing dengan menambah bobot pada saham jangkar BBCA menjadi 45% (Rp 4.500.000), menjaga TLKM di 35% (Rp 3.500.000), dan mengurangi bobot saham terlemah ASII menjadi 20% (Rp 2.000.000). Proyeksi skor kesehatan portofolio setelah penyesuaian akan meningkat dari 79 menjadi 82 poin.",
     projectedScoreAfterRebalance: 82,
   },
+  agentTrace: createMockAgentTrace(["BBCA", "TLKM", "ASII"], false, true),
   query: "simulasi portofolio 10 juta",
 };
 
@@ -327,6 +400,7 @@ const MOCK_TOP5_RESULT: AnalysisResult = {
   },
   historicalTrend: null,
   portfolio: null,
+  agentTrace: createMockAgentTrace(["BBCA", "ICBP", "TLKM", "KLBF", "ADRO"]),
   query: "top 5 saham paling sehat",
 };
 
@@ -430,6 +504,7 @@ function mapBackendToFrontend(data: BackendAnalyzeResponse, query: string): Anal
       comparison: null,
       historicalTrend,
       portfolio,
+      agentTrace: data.agent_trace || null,
       query,
     };
   }
@@ -514,6 +589,7 @@ function mapBackendToFrontend(data: BackendAnalyzeResponse, query: string): Anal
     comparison,
     historicalTrend,
     portfolio,
+    agentTrace: data.agent_trace || null,
     query,
   };
 }

@@ -8,6 +8,7 @@ import ComparisonTable from "@/components/ComparisonTable";
 import FormattedMarkdown from "@/components/FormattedMarkdown";
 import AccessibleTrendChart from "@/components/AccessibleTrendChart";
 import PortfolioSimulatorCard from "@/components/PortfolioSimulatorCard";
+import { AgentTraceView } from "@/components/AgentTraceView";
 
 interface ResultWorkspaceProps {
   result: AnalysisResult;
@@ -46,6 +47,11 @@ export default function ResultWorkspace({ result, onNewQuery, onSpeak }: ResultW
 
       {result.comparison && !result.portfolio && (
         <ComparisonTable comparison={result.comparison} />
+      )}
+
+      {/* Autonomous AI Agent Execution Trace & Tool Registry */}
+      {result.agentTrace && (
+        <AgentTraceView trace={result.agentTrace} />
       )}
 
       <div className="bg-brand-card border border-brand-border rounded-2xl p-6 shadow-xl">
