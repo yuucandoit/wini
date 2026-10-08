@@ -13,18 +13,19 @@ export default function HealthScoreCard({ healthScore }: HealthScoreCardProps) {
   let colorClasses = '';
   let barColorClass = '';
   
-  if (category === 'SANGAT SEHAT') {
-    colorClasses = 'text-emerald-400 bg-emerald-950/40 border-emerald-500/40 shadow-sm shadow-emerald-500/20';
+  const cat = (category || '').toUpperCase();
+  if (cat.includes('SANGAT SEHAT') || score >= 85) {
+    colorClasses = 'text-emerald-300 bg-emerald-950/70 border-emerald-400/60 shadow-sm shadow-emerald-500/20';
     barColorClass = 'bg-emerald-400';
-  } else if (category === 'SEHAT') {
-    colorClasses = 'text-success bg-success/10 border-success/20';
-    barColorClass = 'bg-success';
-  } else if (category === 'WASPADA') {
-    colorClasses = 'text-warning bg-warning/10 border-warning/20';
-    barColorClass = 'bg-warning';
+  } else if (cat.includes('SEHAT') || score >= 70) {
+    colorClasses = 'text-teal-300 bg-teal-950/70 border-teal-400/50';
+    barColorClass = 'bg-teal-400';
+  } else if (cat.includes('WASPADA') || score >= 50) {
+    colorClasses = 'text-amber-300 bg-amber-950/70 border-amber-400/50';
+    barColorClass = 'bg-amber-400';
   } else {
-    colorClasses = 'text-danger bg-danger/10 border-danger/20';
-    barColorClass = 'bg-danger';
+    colorClasses = 'text-rose-300 bg-rose-950/70 border-rose-500/50';
+    barColorClass = 'bg-rose-500';
   }
 
   const ariaLabelText = `Skor kesehatan ${symbol}: ${score} dari 100, kategori ${category}. ${label || ''}`;

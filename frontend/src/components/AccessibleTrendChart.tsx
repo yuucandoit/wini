@@ -362,7 +362,7 @@ export default function AccessibleTrendChart({ trend, onSpeak }: AccessibleTrend
         </div>
       </div>
 
-      {/* SEMANTIC ACCESSIBLE DATA TABLE (WCAG 2.2 AAA standard for Screen Readers) */}
+      {/* SEMANTIC ACCESSIBLE DATA TABLE (Accessible HTML Table for Screen Readers) */}
       <div className="overflow-x-auto">
         <table
           className="w-full text-left text-xs sm:text-sm text-slate-200 border-collapse"
@@ -398,11 +398,11 @@ export default function AccessibleTrendChart({ trend, onSpeak }: AccessibleTrend
                 <td className="py-2.5 px-3">
                   <span
                     className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold ${
-                      pt.status === 'SANGAT SEHAT'
+                      (pt.status || '').toUpperCase().includes('SANGAT SEHAT') || pt.score >= 85
                         ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                        : pt.status === 'SEHAT'
+                        : (pt.status || '').toUpperCase().includes('SEHAT') || pt.score >= 70
                         ? 'bg-teal-950 text-teal-300 border border-teal-800'
-                        : pt.status === 'WASPADA'
+                        : (pt.status || '').toUpperCase().includes('WASPADA') || pt.score >= 50
                         ? 'bg-amber-950 text-amber-300 border border-amber-800'
                         : 'bg-rose-950 text-rose-300 border border-rose-800'
                     }`}

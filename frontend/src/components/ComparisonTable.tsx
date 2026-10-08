@@ -60,13 +60,16 @@ export default function ComparisonTable({ comparison }: ComparisonTableProps) {
                 const score = healthScores[symbol];
                 if (!score) return <td key={symbol} className="px-6 py-5">-</td>;
                 
+                const cat = (score.category || '').toUpperCase();
                 let badgeStyle = '';
-                if (score.category === 'SEHAT') {
-                  badgeStyle = 'bg-success/10 text-success border-success/20';
-                } else if (score.category === 'WASPADA') {
-                  badgeStyle = 'bg-warning/10 text-warning border-warning/20';
+                if (cat.includes('SANGAT SEHAT') || score.score >= 85) {
+                  badgeStyle = 'bg-emerald-950/80 text-emerald-300 border-emerald-400/60 shadow-sm shadow-emerald-500/20';
+                } else if (cat.includes('SEHAT') || score.score >= 70) {
+                  badgeStyle = 'bg-teal-950/80 text-teal-300 border-teal-400/50';
+                } else if (cat.includes('WASPADA') || score.score >= 50) {
+                  badgeStyle = 'bg-amber-950/80 text-amber-300 border-amber-400/50';
                 } else {
-                  badgeStyle = 'bg-danger/10 text-danger border-danger/20';
+                  badgeStyle = 'bg-rose-950/80 text-rose-300 border-rose-500/50';
                 }
                 
                 return (

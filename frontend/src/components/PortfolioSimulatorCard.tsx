@@ -33,13 +33,14 @@ export default function PortfolioSimulatorCard({ portfolio, onSpeak }: Portfolio
   // Status color classes
   let statusBadge = 'bg-emerald-950/80 border-emerald-500 text-emerald-300';
   let barColor = 'bg-emerald-400';
-  if (status === 'SANGAT SEHAT') {
+  const stat = (status || '').toUpperCase();
+  if (stat.includes('SANGAT SEHAT') || weightedScore >= 85) {
     statusBadge = 'bg-emerald-950/80 border-emerald-400 text-emerald-300 shadow-md shadow-emerald-500/20';
     barColor = 'bg-emerald-400';
-  } else if (status === 'SEHAT') {
+  } else if (stat.includes('SEHAT') || weightedScore >= 70) {
     statusBadge = 'bg-teal-950/80 border-teal-500 text-teal-300';
     barColor = 'bg-teal-400';
-  } else if (status === 'WASPADA') {
+  } else if (stat.includes('WASPADA') || weightedScore >= 50) {
     statusBadge = 'bg-amber-950/80 border-amber-500 text-amber-300';
     barColor = 'bg-amber-400';
   } else {
@@ -196,11 +197,11 @@ export default function PortfolioSimulatorCard({ portfolio, onSpeak }: Portfolio
                 <td className="py-3 px-3">
                   <span
                     className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold ${
-                      item.status === 'SANGAT SEHAT'
+                      (item.status || '').toUpperCase().includes('SANGAT SEHAT') || item.score >= 85
                         ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                        : item.status === 'SEHAT'
+                        : (item.status || '').toUpperCase().includes('SEHAT') || item.score >= 70
                         ? 'bg-teal-950 text-teal-300 border border-teal-800'
-                        : item.status === 'WASPADA'
+                        : (item.status || '').toUpperCase().includes('WASPADA') || item.score >= 50
                         ? 'bg-amber-950 text-amber-300 border border-amber-800'
                         : 'bg-rose-950 text-rose-300 border border-rose-800'
                     }`}

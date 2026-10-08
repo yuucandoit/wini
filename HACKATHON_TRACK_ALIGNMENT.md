@@ -90,7 +90,7 @@ WINI AI adalah **AI Agent Otonom Terpadu** yang memiliki **siklus kognitif penuh
 | **Kebenaran Data (*Ground Truth*)** | Rawan halusinasi rasio keuangan dan harga saham. | **Zero-Hallucination Guardrail**: Seluruh kalkulasi skor dan rasio dihitung deterministik matematis dengan Python. |
 | **Memori & Konteks** | Statis per prompt, sering lupa konteks saham. | **Stateful Session Memory** dengan pewarisan entitas (*misal: tanya "berapa utangnya?" langsung tahu saham aktif*). |
 | **Proaktivitas (*Agency*)** | Pasif (hanya menjawab saat ditanya). | **Proaktif**: Mendeteksi sinyal bahaya (*Early Warning*), merekomendasikan rebalancing, dan membunyikan alarm audio. |
-| **Aksesibilitas & Inklusivitas** | Hanya visual teks di layar (eksklusif bagi yang melihat). | **Dual-Sensory (WCAG 2.2 AAA)**: Sonifikasi grafik audio nada, *hands-free always-on voice*, kontrol kecepatan suara. |
+| **Aksesibilitas & Inklusivitas** | Hanya visual teks di layar (eksklusif bagi yang melihat). | **Dual-Sensory Inklusif**: Sonifikasi grafik audio nada, *hands-free always-on voice*, kontrol kecepatan suara, takarir langsung. |
 | **Transparansi Sistem** | *Black box* (user tidak tahu asal data). | **Agent Execution Trace**: Menampilkan durasi, status, dan ringkasan setiap tool yang dieksekusi agen secara real-time. |
 
 ---
@@ -135,7 +135,7 @@ WINI AI adalah **AI Agent Otonom Terpadu** yang memiliki **siklus kognitif penuh
    * Tunjukkan bagaimana agen menghitung alokasi nominal dan secara proaktif menyarankan rebalancing modal.
 
 ### Menit 3: Keunggulan Arsitektur & Kesiapan Produksi (Technical Depth)
-> *"Di balik layar, WINI AI dilengkapi manajemen sumber daya cerdas: Caching Split-TTL untuk menghemat kuota API, penanganan degradasi metrik proporsional jika data laporan keuangan tidak lengkap, fallback dual-mode (100% Mock Offline vs Live API), dan kepatuhan penuh standar aksesibilitas WCAG 2.2 AAA. WINI AI bukan sekadar proyek prototipe, ini adalah lompatan nyata bagi demokratisasi pasar modal Indonesia."*
+> *"Di balik layar, WINI AI dilengkapi manajemen sumber daya cerdas: Caching Split-TTL untuk menghemat kuota API, penanganan degradasi metrik proporsional jika data laporan keuangan tidak lengkap, fallback dual-mode (100% Mock Offline vs Live API), dan antarmuka dual-sensory inklusif yang ramah disabilitas netra dan rungu. WINI AI bukan sekadar proyek prototipe, ini adalah lompatan nyata bagi demokratisasi pasar modal Indonesia."*
 
 ---
 
@@ -145,5 +145,7 @@ WINI AI adalah **AI Agent Otonom Terpadu** yang memiliki **siklus kognitif penuh
 - [x] **Tool Use & Orchestration**: Terintegrasi dengan Sectors API v2, Web Audio API, Mesin Matematika Python, dan LLM Narrative Synthesis.
 - [x] **Real-World Social Impact**: Mengatasi kesenjangan sosial nyata bagi 4M+ penyandang disabilitas di Indonesia.
 - [x] **Zero-Hallucination Guardrails**: Data numerik dikawal formula deterministik matematis (anti-halusinasi finansial).
-- [x] **User Experience & Accessibility**: Antarmuka Dual-Sensory ramah tunanetra dan tunarungu (WCAG 2.2 AAA) dengan Always-on Hands-free Voice.
+- [x] **User Experience & Accessibility**: Antarmuka Dual-Sensory ramah tunanetra dan tunarungu (Sonifikasi Nada Audio, Voice-First Hands-Free, Takarir Langsung).
 - [x] **Code Quality & Reliability**: TypeScript 0-error build, arsitektur modular, unit testing, dan kesiapan deploy Docker Compose.
+
+> ℹ️ **Transparansi Aksesibilitas:** WINI AI berfokus pada fitur inklusif praktis (sonifikasi frekuensi audio grafik, mitigasi jargon keuangan, Always-on Voice, kontras tinggi). Kami tidak mengklaim sertifikasi formal WCAG 2.2 AAA secara mutlak karena kriteria AAA mewajibkan penerjemah video bahasa isyarat BISINDO dan audit laboratorium formal pihak ketiga.

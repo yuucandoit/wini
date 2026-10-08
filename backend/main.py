@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.agent.agent_core import analyze
+from backend.agent.intent import interpret_query
 from backend.disclaimers import get_disclaimer
 from backend.cache import get_cache
 
@@ -284,16 +285,57 @@ def extract_sector_keyword(text: str) -> str | None:
     return None
 
 
+INDONESIAN_NUMBER_WORDS = {
+    "satu": 1,
+    "dua": 2,
+    "tiga": 3,
+    "empat": 4,
+    "lima": 5,
+    "enam": 6,
+    "tujuh": 7,
+    "delapan": 8,
+    "sembilan": 9,
+    "sepuluh": 10,
+}
+
+
 def extract_requested_limit(text: str, default: int = 5) -> int:
-    """Extract requested number of stocks (e.g. 'top 5' -> 5)."""
+    """Extract requested number of stocks dynamically from query (e.g. 'top 3', '3 saham', 'tiga saham' -> 3)."""
     import re
-    m = re.search(r"\btop\s*(\d+)\b", text.lower())
-    if m:
+    lower = text.lower()
+
+    # 1. Pattern 'top 3', 'top 5', 'top 10'
+    m_top = re.search(r"\btop\s*(\d+)\b", lower)
+    if m_top:
         try:
-            val = int(m.group(1))
+            val = int(m_top.group(1))
             return max(1, min(val, 10))
         except ValueError:
             pass
+
+    # 2. Pattern '<N> saham', '<N> emiten', '<N> perusahaan', '<N> rekomendasi', '<N> pilihan'
+    m_count = re.search(r"\b(\d+)\s*(?:saham|emiten|perusahaan|rekomendasi|pilihan|biji|buah)\b", lower)
+    if m_count:
+        try:
+            val = int(m_count.group(1))
+            return max(1, min(val, 10))
+        except ValueError:
+            pass
+
+    # 3. Indonesian words: 'tiga saham', 'top tiga', 'lima saham', 'tiga emiten'
+    for word, num in INDONESIAN_NUMBER_WORDS.items():
+        if re.search(rf"(?:\btop\s+{word}\b|\b{word}\s+(?:saham|emiten|perusahaan|pilihan|rekomendasi)\b)", lower):
+            return num
+
+    # 4. Any standalone digit between 1 and 10 in a discovery query (e.g. 'rekomendasi 3')
+    m_digit = re.search(r"\b([1-9]|10)\b", lower)
+    if m_digit:
+        try:
+            val = int(m_digit.group(1))
+            return max(1, min(val, 10))
+        except ValueError:
+            pass
+
     return default
 
 
@@ -313,13 +355,32 @@ async def analyze_endpoint(request: AnalyzeRequest):
 
     # Normalize or auto-extract tickers
     tickers = [t.strip().upper().replace(".JK", "") for t in request.tickers if t.strip()]
-    if not tickers:
+
+    # Let the LLM interpret what the user actually said; regex is only a fallback.
+    interp = None if tickers else await interpret_query(effective_query)
+    llm_discovery = False
+    llm_limit: int | None = None
+    llm_sector: str | None = None
+    if interp:
+        if interp["intent"] == "UNCLEAR" and not interp["tickers"]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Saya gagal menerima apa yang kamu mau. Tolong ucapkan lagi yang lebih jelas, "
+                    "misalnya sebutkan kode saham atau minta daftar saham terbaik."
+                ),
+            )
+        tickers = interp["tickers"]
+        llm_discovery = interp["intent"] == "SCREENER" and not tickers
+        llm_limit = interp["limit"]
+        llm_sector = interp["sector"]
+    else:
         tickers = extract_tickers_from_text(effective_query)
 
-    # Auto-screener for discovery queries (e.g. "top 5 saham yang sedang bagus")
-    if not tickers and is_discovery_query(effective_query):
-        limit = extract_requested_limit(effective_query, default=5)
-        sector_kw = extract_sector_keyword(effective_query)
+    # Auto-screener for discovery queries (LLM-detected, or keyword fallback if LLM unavailable)
+    if not tickers and (llm_discovery or (interp is None and is_discovery_query(effective_query))):
+        limit = llm_limit or extract_requested_limit(effective_query, default=5)
+        sector_kw = llm_sector or (extract_sector_keyword(effective_query) if interp is None else None)
         if sector_kw:
             logger.info(f"Sector discovery query: sector='{sector_kw}', limit={limit}")
             from backend.services.sectors_service import screen_by_sector

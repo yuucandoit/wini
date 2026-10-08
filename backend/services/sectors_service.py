@@ -265,13 +265,14 @@ async def fetch_company_fundamentals(
         if isinstance(rep, dict) and rep:
             results.append(rep)
         else:
-            logger.warning(f"Live report unavailable for {sym}, checking mock fallback")
-            # Fallback to mock fixture if available
-            mock_companies = _load_mock_companies()
-            for item in mock_companies:
-                if _normalize_ticker(item.get("symbol", "")) == sym:
-                    results.append(item)
-                    break
+            logger.warning(f"Live report unavailable for {sym}")
+            # Fallback to mock fixture ONLY if USE_MOCK_DATA is explicitly True
+            if settings.USE_MOCK_DATA:
+                mock_companies = _load_mock_companies()
+                for item in mock_companies:
+                    if _normalize_ticker(item.get("symbol", "")) == sym:
+                        results.append(item)
+                        break
 
     if results:
         await cache.set("financial", cache_key, results)
@@ -344,10 +345,13 @@ async def screen_top_healthy_companies(limit: int = 5) -> list[dict[str, Any]]:
     except Exception as e:
         logger.error(f"Live screener API failed: {e}")
 
-    # Fallback to local mock
-    mock_companies = _load_mock_companies()
-    fallback_top = mock_companies[:bounded_limit]
-    return fallback_top
+    # Fallback to local mock ONLY if USE_MOCK_DATA is explicitly enabled
+    if settings.USE_MOCK_DATA:
+        mock_companies = _load_mock_companies()
+        fallback_top = mock_companies[:bounded_limit]
+        return fallback_top
+
+    return []
 
 
 async def screen_by_sector(sector_keyword: str, limit: int = 5) -> list[dict[str, Any]]:

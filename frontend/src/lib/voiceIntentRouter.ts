@@ -31,6 +31,7 @@ export type VoiceIntentType =
   | "WATCHLIST_COMMAND"           // Tambah atau baca daftar pantauan via suara
   | "NAVIGATION_HOME"             // Kembali ke Beranda / Reset Dasbor
   | "HELP"                        // Panduan Fitur & Perintah Suara
+  | "UNRECOGNIZED_QUERY"          // Ucapan tidak dikenali / tidak ada kode saham
   | "STOCK_QUERY";                // Pertanyaan Analisis Bebas
 
 export interface VoiceRouteResult {
@@ -199,6 +200,72 @@ export function extractNominalAmount(text: string): number {
 
   // Default standard simulation capital
   return 10_000_000;
+}
+
+const WORD_NUMBERS: Record<string, number> = {
+  satu: 1,
+  dua: 2,
+  tiga: 3,
+  empat: 4,
+  lima: 5,
+  enam: 6,
+  tujuh: 7,
+  delapan: 8,
+  sembilan: 9,
+  sepuluh: 10,
+};
+
+export const SECTOR_KEYWORDS = [
+  "perbankan", "bank", "keuangan", "finansial",
+  "energi", "batubara", "pertambangan", "tambang",
+  "teknologi", "tech", "telekomunikasi", "telco",
+  "consumer", "konsumer", "makanan", "kesehatan",
+  "properti", "infrastruktur", "industri", "transportasi",
+];
+
+export function extractRequestedStockCount(text: string, defaultCount: number = 5): number {
+  const lower = text.toLowerCase();
+
+  // 1. "top 3", "top 5", "top 10"
+  const topMatch = lower.match(/\btop\s*(\d+)\b/);
+  if (topMatch) {
+    const val = parseInt(topMatch[1], 10);
+    if (!isNaN(val) && val >= 1) return Math.min(val, 10);
+  }
+
+  // 2. "3 saham", "3 emiten", "3 perusahaan", "3 pilihan"
+  const countMatch = lower.match(/\b(\d+)\s*(?:saham|emiten|perusahaan|rekomendasi|pilihan|buah|biji)\b/);
+  if (countMatch) {
+    const val = parseInt(countMatch[1], 10);
+    if (!isNaN(val) && val >= 1) return Math.min(val, 10);
+  }
+
+  // 3. Kata angka Indonesia: "tiga saham", "top tiga", "lima saham"
+  for (const [word, num] of Object.entries(WORD_NUMBERS)) {
+    const wordPattern = new RegExp(`(?:\\btop\\s+${word}\\b|\\b${word}\\s+(?:saham|emiten|perusahaan|pilihan|rekomendasi)\\b)`);
+    if (wordPattern.test(lower)) {
+      return num;
+    }
+  }
+
+  // 4. Standalone digit 1-10
+  const anyDigit = lower.match(/\b([1-9]|10)\b/);
+  if (anyDigit) {
+    const val = parseInt(anyDigit[1], 10);
+    if (!isNaN(val) && val >= 1) return Math.min(val, 10);
+  }
+
+  return defaultCount;
+}
+
+export function extractSectorKeyword(text: string): string | null {
+  const lower = text.toLowerCase();
+  for (const kw of SECTOR_KEYWORDS) {
+    if (new RegExp(`\\b${kw}\\b`).test(lower)) {
+      return kw;
+    }
+  }
+  return null;
 }
 
 // --------------------------------------------------------------------------
@@ -506,14 +573,20 @@ export function routeVoiceIntent(
     };
   }
 
-  // 9. SWITCH TO SCREENER (Top Saham Sehat)
-  if (matchesAnyCluster(cleaned, CLUSTERS.SCREENER)) {
+  // 9. SWITCH TO SCREENER (Top Saham Sehat / Rekomendasi Sektor)
+  if (matchesAnyCluster(cleaned, CLUSTERS.SCREENER) || extractSectorKeyword(cleaned) !== null) {
+    const count = extractRequestedStockCount(rawInput, 5);
+    const sector = extractSectorKeyword(cleaned);
+    const targetQ = sector
+      ? `top ${count} saham ${sector}`
+      : `top ${count} saham paling sehat`;
+
     return {
       intent: "SWITCH_FEATURE_SCREENER",
       cleanedQuery: cleaned,
       tickers: [],
-      targetQuery: "top 5 saham paling sehat",
-      rationale: "Beralih ke Skrining Top 5 Saham Tersehat di Bursa Efek Indonesia.",
+      targetQuery: targetQ,
+      rationale: `Beralih ke Skrining Top ${count} Saham Tersehat ${sector ? `Sektor ${sector}` : "di Bursa Efek Indonesia"}.`,
     };
   }
 
@@ -571,7 +644,9 @@ export function routeVoiceIntent(
     }
   }
 
-  // 13. FALLBACK / FREE-FORM STOCK QUESTION
+  // 13. FALLBACK: serahkan seluruh ucapan ke AI di backend untuk ditafsirkan.
+  // Jika AI menilai tidak jelas, backend mengembalikan error yang diucapkan ke pengguna.
+
   return {
     intent: "STOCK_QUERY",
     cleanedQuery: cleaned,

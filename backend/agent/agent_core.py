@@ -61,6 +61,8 @@ SYSTEM_PROMPT = (
     "\n10. Jika data menyebut catatan (notes) seperti rugi, ekuitas negatif, data tidak lengkap, "
     "atau penyesuaian sektor keuangan, sebutkan secara jelas."
     "\n11. Jika ada penurunan/kenaikan skor, jelaskan penyebabnya dari metrik (mis. DER naik) hanya bila angkanya ada di data."
+    "\n12. PENTING: Tulis HANYA analisis dalam Bahasa Indonesia. DILARANG KERAS menyertakan proses berpikir, prolog, atau pengantar berbahasa Inggris (seperti 'The user wants me to...', 'Let me analyze...'). Langsung mulai dengan analisis emiten."
+    "\n13. Patuhi jumlah emiten yang diminta: Jika pengguna meminta 'top 3' atau 3 saham, bahas dan sebutkan hanya 3 emiten yang ada di data. Jangan pernah menyebut 'top 5' jika data atau permintaan adalah 3 saham."
 )
 
 # HTTP timeout for LLM calls
@@ -142,6 +144,7 @@ async def _call_llm(
                 # Clean thinking tags from reasoning models
                 cleaned_content = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL)
                 cleaned_content = re.sub(r"^Here's a thinking process:.*?\n\n", "", cleaned_content, flags=re.DOTALL | re.IGNORECASE)
+                cleaned_content = re.sub(r"^(?:The user wants|Let me analyze|First, let's|Here is my analysis|Thinking Process:).*?(?:\n\n|\n)", "", cleaned_content, flags=re.DOTALL | re.IGNORECASE)
                 cleaned_content = cleaned_content.strip()
 
                 if cleaned_content:

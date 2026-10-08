@@ -1,11 +1,11 @@
 # WINI AI — Autonomous Investment Analyst & Comparative Stock Screener
-### *Track: AI Agents & Assistants | Dirancang Mengikuti WCAG 2.2 (Target Level AAA)*
+### *Track: AI Agents & Assistants | Aksesibilitas Inklusif Ramah Disabilitas Netra & Rungu*
 
 > 🏆 **Kepatuhan Track Hackathon: "AI Agents & Assistants"**  
 > WINI AI adalah **Autonomous Multi-Tool AI Agent** dengan *Cognitive Loop* lengkap (Perception, Planning, Tool Use, Guardrails, & Multi-Modal Action). Seluruh angka finansial dihitung **secara deterministik (bukan oleh LLM)** dan diverifikasi oleh guardrail konsistensi numerik. Dilengkapi sonifikasi audio Web Audio API, umpan balik haptic mobile, dan transkrip langsung.  
-> 📖 Evaluasi mandiri & celah teknis: [HACKATHON_TRACK_ALIGNMENT.md](HACKATHON_TRACK_ALIGNMENT.md)
+> 📖 Evaluasi mandiri & transparansi teknis: [HACKATHON_TRACK_ALIGNMENT.md](HACKATHON_TRACK_ALIGNMENT.md)
 
-WINI AI adalah asisten analis investasi saham Bursa Efek Indonesia (IDX) yang otonom, dirancang mengikuti pedoman **WCAG 2.2** dengan target Level AAA untuk penyandang disabilitas netra dan rungu (*dual-sensory accessibility*).
+WINI AI adalah asisten analis investasi saham Bursa Efek Indonesia (IDX) yang otonom, dirancang dengan fokus aksesibilitas inklusif bagi penyandang disabilitas netra dan rungu (*dual-sensory accessibility*) yang mengadopsi prinsip desain ramah pembaca layar, kontras tinggi, sonifikasi audio, dan navigasi suara bebas genggam (*hands-free*).
 
 Sistem ini mengintegrasikan **Sectors Financial API v2**, **Mesin Skor Kesehatan Finansial Deterministik (Python Math)**, **OpenRouter LLM**, **Web Audio API Sonification (Grafik Suara Tunanetra)**, serta antarmuka suara dan takarir visual waktu-nyata berbasis **Next.js & Tailwind CSS**.
 
@@ -266,4 +266,10 @@ Hasil validasi: **0 errors**.
 ---
 
 ### Lisensi & Kepatuhan
-Dikembangkan untuk Solusi Finansial Inklusif IDX. Semua rekomendasi finansial disertai *Compliance Investment Disclaimer* otomatis sesuai regulasi pasar modal.
+Dikembangkan untuk Solusi Finansial Inklusif IDX. Semua analisis finansial disertai *Compliance Investment Disclaimer* edukatif otomatis sesuai regulasi pasar modal (OJK).
+
+---
+
+### ♿ Konfirmasi & Transparansi Aksesibilitas
+* **Prinsip Desain:** Mengadopsi prinsip aksesibilitas web (WCAG 2.2) seperti rasio kontras tinggi (>7:1), ukuran target sentuh (>=44px), mitigasi jargon keuangan via analogi suara (kriteria 3.1.3), takarir waktu-nyata, dan inovasi representasi visual non-layar melalui sonifikasi audio Web Audio API.
+* **Klarifikasi Klaim:** WINI AI **secara transparan tidak mengklaim sertifikasi formal WCAG Level AAA**, karena belum diaudit oleh badan independen pihak ketiga dan belum menyediakan video penerjemah Bahasa Isyarat (BISINDO). Fitur aksesibilitas difokuskan secara pragmatis pada kebutuhan nyata pengguna tunanetra dan tunarungu di pasar modal.

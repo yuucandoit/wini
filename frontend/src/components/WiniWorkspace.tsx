@@ -82,7 +82,7 @@ export default function WiniWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [isMicActive, setIsMicActive] = useState<boolean>(false);
   const [glossaryEntry, setGlossaryEntry] = useState<GlossaryEntry | null>(null);
-  const [isMockMode, setIsMockMode] = useState<boolean>(true);
+  const [isMockMode, setIsMockMode] = useState<boolean>(false);
 
   const textInputRef = useRef<HTMLInputElement>(null);
   const lastKeyTimeRef = useRef<number>(0);
@@ -116,8 +116,15 @@ export default function WiniWorkspace() {
     pitch: 1.02,
   });
 
-  // Synchronize mock mode state from localStorage/env
+  // Synchronize mock mode state from localStorage/env (default: live real API)
   useEffect(() => {
+    if (process.env.NEXT_PUBLIC_USE_MOCK_DATA !== "true") {
+      try {
+        localStorage.removeItem("wini_mock_mode");
+      } catch {
+        // ignore
+      }
+    }
     setIsMockMode(isMockModeActive());
     const handler = (e: Event) => {
       const customEvent = e as CustomEvent<boolean>;
@@ -327,6 +334,19 @@ export default function WiniWorkspace() {
       return;
     }
 
+    // Intent: Ucapan Tidak Dikenali / Tidak Ada Kode Saham
+    if (route.intent === "UNRECOGNIZED_QUERY") {
+      cancelSpeech();
+      stopListeningRef.current();
+      stopSpectrum();
+      setIsMicActive(false);
+      playChime("stop");
+      const resp = route.spokenResponse || "Saya gagal menerima apa yang kamu mau. Tolong ucapkan lagi yang lebih jelas, misalnya sebutkan kode saham seperti BBCA, TLKM, atau katakan 'lihat top 5 saham'.";
+      setCaptionText(`❓ ${resp}`);
+      speak(resp, resumeListeningAfterSpeak);
+      return;
+    }
+
     // Intent: Daftar Pantauan (Watchlist) Sederhana Berbasis Suara
     if (route.intent === "WATCHLIST_COMMAND") {
       cancelSpeech();
@@ -361,10 +381,10 @@ export default function WiniWorkspace() {
       return;
     }
 
-    // Intent: Beralih Fitur (Trend, Portfolio, Screener, Comparison, Single)
-    const targetQ = route.targetQuery || clean;
-    setCaptionText(`🔍 ${route.rationale || targetQ}`);
-    handleSubmitQuery(targetQ);
+    // Intent: Beralih Fitur — kirim ucapan asli pengguna; AI di backend yang menafsirkan maksudnya
+    // (tidak ada query hasil rewrite / default ticker hardcode).
+    setCaptionText(`🔍 Memproses: "${clean}"`);
+    handleSubmitQuery(clean);
   }, [
     cancelSpeech,
     speak,
@@ -681,7 +701,11 @@ export default function WiniWorkspace() {
     setCurrentQuery(cleanQuery);
     setPhase("processing");
     setError(null);
-    setCaptionText(`Sedang menganalisis: "${cleanQuery}"... Mohon tunggu sebentar.`);
+    setCaptionText(`⏳ Siap, sekarang sedang aku proses: "${cleanQuery}"...`);
+
+    // 🔊 Voice feedback instan: konfirmasi ke pengguna bahwa query diterima & sedang dianalisis
+    playChime("start");
+    speak("Siap, sekarang sedang aku proses.");
 
     try {
       const analysisData = await analyzeStock(cleanQuery);
@@ -718,11 +742,25 @@ export default function WiniWorkspace() {
         setIsMicActive(true);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Terjadi kendala saat menganalisis emiten.";
-      setError(msg);
+      const rawMsg = err instanceof Error ? err.message : "Terjadi kendala saat menganalisis emiten.";
+      const lowerErr = rawMsg.toLowerCase();
+
+      let spokenMsg = "Maaf, terjadi kendala saat memproses analisis.";
+      if (lowerErr.includes("kode saham") || lowerErr.includes("tidak dapat mendeteksi") || lowerErr.includes("400")) {
+        spokenMsg = "Saya gagal menerima apa yang kamu mau. Tolong ucapkan lagi yang lebih jelas, jangan lupa sebutkan kode sahamnya.";
+      } else if (lowerErr.includes("token") || lowerErr.includes("401") || lowerErr.includes("403") || lowerErr.includes("autentikasi")) {
+        spokenMsg = "Otentikasi token API backend gagal. Silakan periksa kunci API Anda.";
+      } else if (lowerErr.includes("failed to fetch") || lowerErr.includes("network") || lowerErr.includes("connection") || lowerErr.includes("offline")) {
+        spokenMsg = "Gagal terhubung ke server backend WINI AI. Pastikan server backend sedang aktif pada port 8000.";
+      } else {
+        spokenMsg = "Saya gagal menerima apa yang kamu mau. Tolong ucapkan lagi yang lebih jelas.";
+      }
+
+      playChime("stop");
+      setError(rawMsg);
       setPhase("dashboard");
-      setCaptionText(`Maaf, terjadi kesalahan: ${msg}`);
-      speak("Maaf, terjadi kendala saat memproses analisis. Silakan coba kembali.");
+      setCaptionText(`❌ ${rawMsg}`);
+      speak(spokenMsg, resumeListeningAfterSpeak);
     }
   };
 
@@ -1223,7 +1261,7 @@ export default function WiniWorkspace() {
           </div>
 
           <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">
-            Menganalisis Data Emiten...
+            Siap, Sekarang Sedang Aku Proses...
           </h2>
           <p className="text-cyan-300 text-lg max-w-md font-medium">
             "{currentQuery}"
@@ -1337,7 +1375,7 @@ export default function WiniWorkspace() {
             {/* Compliance Statement */}
             <div className="flex items-center space-x-2 text-slate-400 text-center">
               <span aria-hidden="true" className="text-cyan-400 font-semibold">♿</span>
-              <span>Aksesibilitas 100% WCAG 2.2 AAA (Ramah Tunanetra &amp; Tunarungu)</span>
+              <span>Aksesibilitas Inklusif (Ramah Tunanetra &amp; Tunarungu)</span>
             </div>
 
             {/* Keyboard Nav Shortcut Legends */}

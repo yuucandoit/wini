@@ -83,9 +83,7 @@ export const isMockModeActive = (): boolean => {
       return stored === "true";
     }
   }
-  return process.env.NEXT_PUBLIC_USE_MOCK_DATA !== undefined
-    ? process.env.NEXT_PUBLIC_USE_MOCK_DATA === "true"
-    : true;
+  return process.env.NEXT_PUBLIC_USE_MOCK_DATA === "true";
 };
 
 export const setMockModeActive = (active: boolean): void => {
@@ -406,6 +404,37 @@ const MOCK_TOP5_RESULT: AnalysisResult = {
   query: "top 5 saham paling sehat",
 };
 
+const MOCK_TOP3_RESULT: AnalysisResult = {
+  summary:
+    "Berdasarkan skrining fundamental pasar saham BEI, top 3 saham paling sehat saat ini adalah BBCA (skor 88), ICBP (skor 85), dan TLKM (skor 82). Ketiga emiten ini memiliki neraca keuangan yang sangat kokoh dengan DER terkendali serta profitabilitas ROE di atas rata-rata industri.",
+  transcript:
+    "Hasil skrining top 3 saham paling sehat di Bursa Efek Indonesia. Peringkat pertama adalah BBCA dengan skor 88 kategori SANGAT SEHAT. Peringkat kedua ICBP dengan skor 85 kategori SANGAT SEHAT. Dan peringkat ketiga TLKM dengan skor 82 kategori SEHAT. Ketiga emiten ini memiliki likuiditas tinggi dan risiko solvabilitas rendah.\n\n⚠️ Disclaimer Investasi: Analisis yang dihasilkan oleh WINI AI didasarkan pada data historis dan model kuantitatif. Ini BUKAN merupakan saran investasi.",
+  healthScore: null,
+  comparison: {
+    symbols: ["BBCA", "ICBP", "TLKM"],
+    names: {
+      BBCA: "Bank Central Asia Tbk",
+      ICBP: "Indofood CBP Sukses Makmur Tbk",
+      TLKM: "Telkom Indonesia Tbk",
+    },
+    healthScores: {
+      BBCA: { symbol: "BBCA", name: "Bank Central Asia Tbk", score: 88, category: "SANGAT SEHAT", label: "[ SANGAT SEHAT - Skor 88/100 ]" },
+      ICBP: { symbol: "ICBP", name: "Indofood CBP Sukses Makmur Tbk", score: 85, category: "SANGAT SEHAT", label: "[ SANGAT SEHAT - Skor 85/100 ]" },
+      TLKM: { symbol: "TLKM", name: "Telkom Indonesia Tbk", score: 82, category: "SEHAT", label: "[ SEHAT - Skor 82/100 ]" },
+    },
+    metrics: [
+      { metric: "Skor Kesehatan", values: { BBCA: "88/100", ICBP: "85/100", TLKM: "82/100" } },
+      { metric: "Status", values: { BBCA: "SANGAT SEHAT", ICBP: "SANGAT SEHAT", TLKM: "SEHAT" } },
+      { metric: "DER (Debt to Equity)", values: { BBCA: "5.2x", ICBP: "0.82x", TLKM: "0.75x" } },
+      { metric: "ROE (Return on Equity)", values: { BBCA: "21.3%", ICBP: "18.6%", TLKM: "18.2%" } },
+    ],
+  },
+  historicalTrend: null,
+  portfolio: null,
+  agentTrace: createMockAgentTrace(["BBCA", "ICBP", "TLKM"]),
+  query: "top 3 saham paling sehat",
+};
+
 // ----------------------------------------------------------
 // Helper: Map Backend Data to Frontend Types
 // ----------------------------------------------------------
@@ -622,8 +651,19 @@ export async function analyzeStock(query: string): Promise<AnalysisResult> {
       return { ...MOCK_PORTFOLIO_RESULT, query };
     }
 
-    // 3. Query Top 5 / Rekomendasi / Screener
-    if (q.includes("top") || q.includes("bagus") || q.includes("terbaik") || q.includes("sehat") || q.includes("rekomendasi")) {
+    // 3. Query Top 3 / Top 5 / Rekomendasi / Screener
+    if (
+      q.includes("top") ||
+      q.includes("bagus") ||
+      q.includes("terbaik") ||
+      q.includes("sehat") ||
+      q.includes("rekomendasi") ||
+      /\b(3|tiga|5|lima)\s*(saham|emiten)\b/.test(q)
+    ) {
+      const isTop3 = /\b(3|tiga)\b/.test(q);
+      if (isTop3) {
+        return { ...MOCK_TOP3_RESULT, query };
+      }
       return { ...MOCK_TOP5_RESULT, query };
     }
 
@@ -654,16 +694,24 @@ export async function analyzeStock(query: string): Promise<AnalysisResult> {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error ${response.status}: ${errorText}`);
+      let errorMsg = `API error ${response.status}`;
+      try {
+        const errorJson = await response.json();
+        if (errorJson.detail) {
+          errorMsg = typeof errorJson.detail === "string" ? errorJson.detail : JSON.stringify(errorJson.detail);
+        }
+      } catch {
+        const errorText = await response.text();
+        if (errorText) errorMsg = errorText;
+      }
+      throw new Error(errorMsg);
     }
 
     const backendData = (await response.json()) as BackendAnalyzeResponse;
     return mapBackendToFrontend(backendData, query);
   } catch (error) {
-    console.warn("Backend unavailable or returned error, using fallback mock data:", error);
-    await delay(800);
-    return isComparison ? MOCK_COMPARISON_RESULT : MOCK_SINGLE_RESULT;
+    console.error("Backend request failed, not falling back to mock BBCA:", error);
+    throw error;
   }
 }
 
