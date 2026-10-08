@@ -381,10 +381,18 @@ export default function WiniWorkspace() {
       return;
     }
 
-    // Intent: Beralih Fitur — kirim ucapan asli pengguna; AI di backend yang menafsirkan maksudnya
-    // (tidak ada query hasil rewrite / default ticker hardcode).
-    setCaptionText(`🔍 Memproses: "${clean}"`);
-    handleSubmitQuery(clean);
+    // Intent: Beralih Fitur — kirim ucapan asli pengguna; AI di backend yang menafsirkan maksudnya.
+    // Jika pengguna tidak menyebut emiten tapi sedang melihat hasil analisis, sertakan emiten aktif
+    // (contextual inheritance) agar backend tidak menerima ucapan tanpa konteks.
+    let outgoing = clean;
+    const said = new Set(route.tickers);
+    const inherited = resultRef.current ? route.tickers : [];
+    const alreadyMentioned = inherited.some((t) => clean.toUpperCase().includes(t));
+    if (said.size > 0 && resultRef.current && !alreadyMentioned && route.intent !== "SWITCH_FEATURE_SCREENER") {
+      outgoing = `${clean} ${inherited.join(" ")}`;
+    }
+    setCaptionText(`🔍 Memproses: "${outgoing}"`);
+    handleSubmitQuery(outgoing);
   }, [
     cancelSpeech,
     speak,

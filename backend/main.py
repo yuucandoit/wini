@@ -361,8 +361,13 @@ async def analyze_endpoint(request: AnalyzeRequest):
     llm_discovery = False
     llm_limit: int | None = None
     llm_sector: str | None = None
-    if interp:
-        if interp["intent"] == "UNCLEAR" and not interp["tickers"]:
+    if interp and interp["intent"] == "UNCLEAR" and not interp["tickers"]:
+        # The LLM (often a small free model) may be wrong; trust regex if it finds something.
+        regex_tickers = extract_tickers_from_text(effective_query)
+        if regex_tickers or is_discovery_query(effective_query):
+            logger.info(f"LLM said UNCLEAR but regex recovered intent for '{effective_query[:60]}'")
+            interp = None
+        else:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -370,6 +375,7 @@ async def analyze_endpoint(request: AnalyzeRequest):
                     "misalnya sebutkan kode saham atau minta daftar saham terbaik."
                 ),
             )
+    if interp:
         tickers = interp["tickers"]
         llm_discovery = interp["intent"] == "SCREENER" and not tickers
         llm_limit = interp["limit"]
