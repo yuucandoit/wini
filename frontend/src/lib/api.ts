@@ -194,14 +194,16 @@ function createMockAgentTrace(tickers: string[], hasTrend = false, hasPort = fal
   });
 
   return {
-    goal: `Analisis fundamental otonom untuk emiten ${tickers.join(", ")}`,
+    goal: `Analisis fundamental untuk emiten ${tickers.join(", ")} (DATA CONTOH)`,
     session_id: "mock-session-" + Date.now(),
     tools_executed: steps,
     guardrail_verification: {
       passed: true,
-      rule: "Deterministic Financial Math Guardrail (0% Hallucination)",
+      rule: "Konsistensi angka narasi vs hasil hitung (contoh mock, tidak dijalankan sungguhan)",
       metrics_evaluated: tickers.length,
     },
+    data_source: "mock",
+    measured: false, // durasi pada mock adalah ilustrasi, BUKAN hasil ukur
     total_duration_ms: steps.reduce((acc, s) => acc + s.duration_ms, 0),
   };
 }

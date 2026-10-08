@@ -15,8 +15,25 @@ import type { GlossaryEntry } from "@/lib/glossary";
 import { routeVoiceIntent, generateHelpSpokenResponse } from "@/lib/voiceIntentRouter";
 import { playGraphSonification } from "@/components/AccessibleTrendChart";
 
+// Disclaimer dibacakan sekali di awal sesi (kepatuhan OJK: informasi edukatif, bukan nasihat investasi).
 const GREETING_SPOKEN =
-  "Selamat datang di WINI AI. Tekan tombol Mulai atau ucapkan Let's go WINI untuk memulai.";
+  "Selamat datang di WINI AI. Perlu diketahui, seluruh analisis adalah informasi edukatif dan bukan nasihat investasi. " +
+  "Tekan tombol Mulai, tekan Alt Shift M, atau ucapkan Let's go WINI untuk memulai.";
+
+/** Getaran haptic per status kesehatan (aksesibilitas tunarungu / mobile). */
+const HAPTIC_PATTERNS: Record<string, number[]> = {
+  "SANGAT SEHAT": [120],
+  SEHAT: [120, 80, 120],
+  WASPADA: [200, 100, 200, 100, 200],
+  "BERISIKO TINGGI": [500, 150, 500],
+  BAHAYA: [500, 150, 500],
+};
+
+function vibrateForStatus(status: string) {
+  if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+    navigator.vibrate(HAPTIC_PATTERNS[status] ?? [120]);
+  }
+}
 
 const MIC_ACTIVE_ANNOUNCEMENT =
   "Mikrofon sudah aktif. Silakan sebutkan saham atau pertanyaan Anda.";
@@ -281,6 +298,69 @@ export default function WiniWorkspace() {
       }
     }
 
+    // Intent: Penyesuaian Kecepatan Suara via Suara
+    if (route.intent === "ADJUST_SPEECH_SPEED") {
+      cancelSpeech();
+      stopListeningRef.current();
+      stopSpectrum();
+      setIsMicActive(false);
+      if (/pelan|lambat/i.test(clean)) {
+        setTtsRate(1.0);
+      } else if (/cepat/i.test(clean)) {
+        setTtsRate(1.5);
+      } else {
+        setTtsRate(1.0);
+      }
+      setCaptionText(`⚡ ${route.spokenResponse}`);
+      speak(route.spokenResponse || "Kecepatan suara disesuaikan.", resumeListeningAfterSpeak);
+      return;
+    }
+
+    // Intent: Konfirmasi Saat Salah Dengar
+    if (route.intent === "CONFIRMATION_FALLBACK" && route.spokenResponse) {
+      cancelSpeech();
+      stopListeningRef.current();
+      stopSpectrum();
+      setIsMicActive(false);
+      setCaptionText(`❓ ${route.spokenResponse}`);
+      speak(route.spokenResponse, resumeListeningAfterSpeak);
+      return;
+    }
+
+    // Intent: Daftar Pantauan (Watchlist) Sederhana Berbasis Suara
+    if (route.intent === "WATCHLIST_COMMAND") {
+      cancelSpeech();
+      stopListeningRef.current();
+      stopSpectrum();
+      setIsMicActive(false);
+
+      const target = route.targetQuery || "";
+      let wl: string[] = [];
+      try {
+        wl = JSON.parse(localStorage.getItem("wini_watchlist") || "[]");
+      } catch {
+        wl = [];
+      }
+
+      let resp = "";
+      if (target.startsWith("ADD:")) {
+        const sym = target.replace("ADD:", "");
+        if (!wl.includes(sym)) {
+          wl.push(sym);
+          localStorage.setItem("wini_watchlist", JSON.stringify(wl));
+        }
+        resp = `Saham ${sym} berhasil ditambahkan ke daftar pantauan Anda.`;
+      } else if (wl.length === 0) {
+        resp = "Daftar pantauan Anda masih kosong. Ucapkan 'tambahkan BBCA ke pantauan' untuk memulai.";
+      } else {
+        resp = `Saham dalam daftar pantauan Anda adalah: ${wl.join(", ")}. Ucapkan kode saham untuk memeriksa kesehatannya.`;
+      }
+
+      setCaptionText(`📌 ${resp}`);
+      speak(resp, resumeListeningAfterSpeak);
+      return;
+    }
+
     // Intent: Beralih Fitur (Trend, Portfolio, Screener, Comparison, Single)
     const targetQ = route.targetQuery || clean;
     setCaptionText(`🔍 ${route.rationale || targetQ}`);
@@ -475,6 +555,26 @@ export default function WiniWorkspace() {
         return;
       }
 
+      // Pintasan alternatif eksplisit (tidak bentrok dengan screen reader):
+      // Alt+Shift+M = buka/tutup mikrofon, kapan pun pada fase greeting/dashboard.
+      if (e.altKey && e.shiftKey && e.code === "KeyM") {
+        e.preventDefault();
+        lastKeyTimeRef.current = 0;
+        handleGlobalTrigger();
+        return;
+      }
+
+      // Jangan hitung tombol navigasi screen reader / pembantu (NVDA, JAWS, VoiceOver)
+      // sebagai "tekan 2x". Kombinasi dengan modifier juga diabaikan.
+      const SR_NAV_KEYS = new Set([
+        "Tab", "Shift", "Control", "Alt", "Meta", "CapsLock", "Insert",
+        "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+        "Home", "End", "PageUp", "PageDown", "ContextMenu",
+      ]);
+      if (SR_NAV_KEYS.has(e.key) || e.ctrlKey || e.altKey || e.metaKey) {
+        return;
+      }
+
       // On results page: Escape key allows returning to dashboard deliberately
       if (phaseRef.current === "results") {
         if (e.key === "Escape") {
@@ -590,6 +690,7 @@ export default function WiniWorkspace() {
       const earconStatus = analysisData.healthScore?.category ?? "SEHAT";
       playChime("success");
       setTimeout(() => playStatusEarcon(earconStatus), 400);
+      vibrateForStatus(earconStatus);
 
       setResult(analysisData);
       lastKeyTimeRef.current = 0;

@@ -166,6 +166,7 @@ class HealthScore(BaseModel):
     metrics_evaluated: dict = Field(description="Metric values used")
     metrics_coverage: float = Field(description="Fraction of metrics available (0-1)")
     breakdown: dict = Field(default_factory=dict, description="Per-metric score breakdown")
+    notes: list[str] = Field(default_factory=list, description="Catatan edge case (rugi, ekuitas negatif, data kosong, sektor)")
 
 
 class NewsSummary(BaseModel):
@@ -199,6 +200,7 @@ class AnalyzeResponse(BaseModel):
     historical_trend: dict | None = None
     portfolio_simulation: dict | None = None
     narrative: str
+    agent_trace: dict | None = None
     disclaimer: str
     session_id: str
 
@@ -362,6 +364,7 @@ async def analyze_endpoint(request: AnalyzeRequest):
             historical_trend=result.get("historical_trend"),
             portfolio_simulation=result.get("portfolio_simulation"),
             narrative=result["narrative"],
+            agent_trace=result.get("agent_trace"),
             disclaimer=result["disclaimer"],
             session_id=result["session_id"],
         )

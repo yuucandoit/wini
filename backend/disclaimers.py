@@ -2,10 +2,10 @@
 
 
 INVESTMENT_DISCLAIMER = (
-    "⚠️ Disclaimer Investasi: Analisis yang dihasilkan oleh WINI AI "
-    "didasarkan pada data historis dan model kuantitatif. Ini BUKAN merupakan "
-    "saran investasi. Selalu lakukan riset mandiri dan konsultasikan dengan "
-    "penasihat keuangan berlisensi sebelum mengambil keputusan investasi. "
+    "⚠️ Disclaimer Kepatuhan: Analisis yang dihasilkan oleh WINI AI "
+    "adalah informasi edukatif berbasis data historis dan model kuantitatif. Ini BUKAN merupakan "
+    "rekomendasi atau nasihat investasi. Selalu lakukan riset mandiri dan berkonsultasi dengan "
+    "penasihat keuangan berizin OJK sebelum mengambil keputusan investasi. "
     "Kinerja masa lalu tidak menjamin hasil di masa depan."
 )
 

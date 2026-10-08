@@ -110,7 +110,12 @@ export interface AgentExecutionTrace {
     passed: boolean;
     rule: string;
     metrics_evaluated?: number;
+    unverified?: string[];
   };
+  /** "live" | "mock" — sumber data analisis */
+  data_source?: "live" | "mock";
+  /** true = durasi hasil pengukuran nyata; false/undefined = simulasi (mock) */
+  measured?: boolean;
   total_duration_ms: number;
 }
 

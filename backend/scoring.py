@@ -31,6 +31,20 @@ class HealthScoreResult:
     metrics_evaluated: dict[str, float]
     metrics_coverage: float
     breakdown: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Catatan edge case / keterbatasan yang dibacakan ke pengguna
+    # (rugi, ekuitas negatif, data kosong, penyesuaian sektor).
+    notes: list[str] = field(default_factory=list)
+
+
+_FINANCIAL_SECTOR_KEYWORDS = ("financ", "keuangan", "bank", "perbankan", "asuransi", "insurance")
+
+
+def is_financial_sector(sector: str | None) -> bool:
+    """True jika sektor adalah keuangan/perbankan (leverage tinggi = struktur normal)."""
+    if not sector:
+        return False
+    s = sector.lower()
+    return any(k in s for k in _FINANCIAL_SECTOR_KEYWORDS)
 
 
 def _normalize_percentage(val: float) -> float:
@@ -41,10 +55,25 @@ def _normalize_percentage(val: float) -> float:
     return val
 
 
-def _score_der(val: float) -> tuple[float, str]:
+def _score_der(val: float, financial: bool = False) -> tuple[float, str]:
     """Score Debt to Equity Ratio (max weight: 30).
     Lower is generally safer.
+
+    Untuk sektor keuangan/perbankan, DER secara alami tinggi (dana pihak ketiga
+    dihitung sebagai liabilitas), sehingga ambang batas disesuaikan.
+    Ekuitas negatif (DER < 0) selalu mendapat skor terendah.
     """
+    if val < 0:
+        return 0.0, "Kritis: Ekuitas negatif (liabilitas melebihi aset), DER tidak dapat ditafsirkan wajar"
+    if financial:
+        if val <= 6.0:
+            return 30.0, "Sangat baik untuk sektor keuangan: leverage dalam kisaran normal bank (DER <= 6.0)"
+        elif val <= 8.0:
+            return 22.0, "Moderat untuk sektor keuangan: leverage agak tinggi (DER 6.0 - 8.0)"
+        elif val <= 10.0:
+            return 15.0, "Cukup tinggi untuk sektor keuangan (DER 8.0 - 10.0)"
+        else:
+            return 5.0, "Tinggi bahkan untuk sektor keuangan (DER > 10.0)"
     if val <= 1.0:
         return 30.0, "Sangat baik: Liabilitas seimbang atau lebih kecil dari ekuitas (DER <= 1.0)"
     elif val <= 1.5:
@@ -104,6 +133,8 @@ def _score_pe(val: float) -> tuple[float, str]:
     """Score Price-to-Earnings Ratio (max weight: 10).
     Moderate positive PE is ideal.
     """
+    if val <= 0.0:
+        return 0.0, "Perusahaan merugi: PE nol atau negatif sehingga valuasi berbasis laba tidak bermakna"
     if 5.0 <= val <= 15.0:
         return 10.0, "Valuasi atraktif: PE rasional dan berpotensi undervalued (PE 5 - 15)"
     elif 15.0 < val <= 25.0:
@@ -148,22 +179,36 @@ def _get_status(score: int) -> str:
     return "BERISIKO TINGGI"
 
 
-def calculate_health_score(metrics: dict[str, Any]) -> HealthScoreResult:
+def calculate_health_score(
+    metrics: dict[str, Any],
+    sector: str | None = None,
+) -> HealthScoreResult:
     """Calculate deterministic health score with graceful degradation.
 
     Args:
         metrics: Dictionary containing financial metric keys and numeric values.
+        sector: Optional sector name. Sektor keuangan/perbankan memakai ambang DER
+            yang disesuaikan karena leverage tinggi adalah struktur normal bank.
 
     Returns:
-        HealthScoreResult containing final scaled score, status, and breakdown.
+        HealthScoreResult containing final scaled score, status, breakdown, and notes.
     """
+    financial = is_financial_sector(sector)
+    notes: list[str] = []
+
     scorers = {
-        "der_mrq": _score_der,
+        "der_mrq": lambda v: _score_der(v, financial=financial),
         "roe_ttm": _score_roe,
         "roa_ttm": _score_roa,
         "dar_mrq": _score_dar,
         "pe_ttm": _score_pe,
     }
+
+    if financial:
+        notes.append(
+            "Sektor keuangan: ambang DER disesuaikan karena bank secara alami memiliki "
+            "leverage tinggi. Perbandingan langsung dengan sektor non-keuangan kurang tepat."
+        )
 
     evaluated_metrics: dict[str, float] = {}
     breakdown: dict[str, dict[str, Any]] = {}
@@ -178,10 +223,19 @@ def calculate_health_score(metrics: dict[str, Any]) -> HealthScoreResult:
         if raw_val is not None:
             try:
                 numeric_val = float(raw_val)
+                if numeric_val != numeric_val:  # NaN
+                    raise ValueError("NaN")
                 score_pts, description = scorer_fn(numeric_val)
                 evaluated_metrics[metric_name] = numeric_val
                 total_achieved += score_pts
                 total_possible_weight += max_weight
+
+                if metric_name == "der_mrq" and numeric_val < 0:
+                    notes.append("Ekuitas perusahaan negatif: liabilitas melebihi aset. Ini sinyal risiko serius.")
+                if metric_name == "pe_ttm" and numeric_val <= 0:
+                    notes.append("Perusahaan sedang merugi (PE nol atau negatif): valuasi berbasis laba tidak bermakna.")
+                if metric_name == "roe_ttm" and _normalize_percentage(numeric_val) < 0:
+                    notes.append("ROE negatif: perusahaan mencatat rugi atas ekuitas.")
 
                 breakdown[metric_name] = {
                     "value": numeric_val,
@@ -190,6 +244,7 @@ def calculate_health_score(metrics: dict[str, Any]) -> HealthScoreResult:
                     "description": description,
                 }
             except (ValueError, TypeError):
+                notes.append(f"Nilai metrik {metric_name} tidak valid dan diabaikan.")
                 breakdown[metric_name] = {
                     "value": None,
                     "score": 0.0,
@@ -203,6 +258,15 @@ def calculate_health_score(metrics: dict[str, Any]) -> HealthScoreResult:
                 "max_weight": max_weight,
                 "description": "Data metrik tidak tersedia",
             }
+
+    missing = [m for m in scorers if m not in evaluated_metrics]
+    if missing and evaluated_metrics:
+        notes.append(
+            f"Data tidak lengkap: {len(missing)} dari {len(scorers)} metrik tidak tersedia. "
+            "Skor dihitung proporsional dari metrik yang ada sehingga kurang andal."
+        )
+    if not evaluated_metrics:
+        notes.append("Seluruh metrik fundamental tidak tersedia. Skor tidak dapat dihitung.")
 
     total_metrics_count = len(scorers)
     available_metrics_count = len(evaluated_metrics)
@@ -251,6 +315,7 @@ def calculate_health_score(metrics: dict[str, Any]) -> HealthScoreResult:
         metrics_evaluated=evaluated_metrics,
         metrics_coverage=coverage,
         breakdown=breakdown,
+        notes=notes,
     )
 
 

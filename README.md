@@ -1,11 +1,11 @@
 # WINI AI — Autonomous Investment Analyst & Comparative Stock Screener
-### *Track: AI Agents & Assistants | Inclusive Edition (WCAG 2.2 AAA)*
+### *Track: AI Agents & Assistants | Dirancang Mengikuti WCAG 2.2 (Target Level AAA)*
 
-> 🏆 **Kepatuhan Penuh Track Hackathon: "AI Agents & Assistants"**  
-> WINI AI bukan sekadar chatbot atau prompt wrapper. WINI AI adalah **Autonomous Multi-Tool AI Agent** dengan *Cognitive Loop* lengkap (Perception, Planning, Tool Use, Guardrails, & Multi-Modal Action), dilengkapi *Agent Execution Trace* transparan, memori percakapan multi-turn, dan sonifikasi audio grafik Web Audio API bagi penyandang disabilitas.  
-> 📖 Baca dokumen lengkap evaluasi juri di: [HACKATHON_TRACK_ALIGNMENT.md](HACKATHON_TRACK_ALIGNMENT.md)
+> 🏆 **Kepatuhan Track Hackathon: "AI Agents & Assistants"**  
+> WINI AI adalah **Autonomous Multi-Tool AI Agent** dengan *Cognitive Loop* lengkap (Perception, Planning, Tool Use, Guardrails, & Multi-Modal Action). Seluruh angka finansial dihitung **secara deterministik (bukan oleh LLM)** dan diverifikasi oleh guardrail konsistensi numerik. Dilengkapi sonifikasi audio Web Audio API, umpan balik haptic mobile, dan transkrip langsung.  
+> 📖 Evaluasi mandiri & celah teknis: [HACKATHON_TRACK_ALIGNMENT.md](HACKATHON_TRACK_ALIGNMENT.md)
 
-WINI AI adalah asisten analis investasi saham Bursa Efek Indonesia (IDX) yang otonom, cerdas, dan dirancang khusus dengan standar aksesibilitas inklusif tingkat tinggi bagi penyandang disabilitas (*dual-sensory accessibility*).
+WINI AI adalah asisten analis investasi saham Bursa Efek Indonesia (IDX) yang otonom, dirancang mengikuti pedoman **WCAG 2.2** dengan target Level AAA untuk penyandang disabilitas netra dan rungu (*dual-sensory accessibility*).
 
 Sistem ini mengintegrasikan **Sectors Financial API v2**, **Mesin Skor Kesehatan Finansial Deterministik (Python Math)**, **OpenRouter LLM**, **Web Audio API Sonification (Grafik Suara Tunanetra)**, serta antarmuka suara dan takarir visual waktu-nyata berbasis **Next.js & Tailwind CSS**.
 

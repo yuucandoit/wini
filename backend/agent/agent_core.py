@@ -37,6 +37,7 @@ from backend.scoring import (
 )
 from backend.optimizer import optimize_for_llm
 from backend.disclaimers import get_disclaimer
+from backend.guardrail import verify_narrative, build_deterministic_narrative
 from backend.agent.memory import get_memory
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,11 @@ SYSTEM_PROMPT = (
     "\n6. Format: 2-3 paragraf singkat dan padat."
     "\n7. Jika ada berita terkait, sebutkan sentimen umumnya."
     "\n8. Gunakan bahasa narasi yang mengalir dan ramah Text-to-Speech (hindari simbol aneh atau karakter berlebihan)."
+    "\n9. JANGAN memakai kata 'rekomendasi', 'sebaiknya beli/jual', atau 'saran investasi'. "
+    "Gunakan 'gambaran', 'pertimbangan', atau 'hal yang perlu diperhatikan' (kepatuhan OJK)."
+    "\n10. Jika data menyebut catatan (notes) seperti rugi, ekuitas negatif, data tidak lengkap, "
+    "atau penyesuaian sektor keuangan, sebutkan secara jelas."
+    "\n11. Jika ada penurunan/kenaikan skor, jelaskan penyebabnya dari metrik (mis. DER naik) hanya bila angkanya ada di data."
 )
 
 # HTTP timeout for LLM calls
@@ -194,40 +200,44 @@ async def analyze(
     # --- Phase 1: Parallel data fetching ---
     logger.info(f"Starting analysis for tickers: {normalized_tickers}")
 
-    fetch_start = time.perf_counter()
-    company_task = fetch_company_fundamentals(normalized_tickers)
-    news_task = fetch_news(symbols=normalized_tickers, limit=5)
+    async def _timed(coro):
+        """Jalankan coroutine dan ukur durasi NYATA-nya (ms)."""
+        t0 = time.perf_counter()
+        try:
+            value = await coro
+            return value, int((time.perf_counter() - t0) * 1000), None
+        except Exception as exc:  # noqa: BLE001
+            return None, int((time.perf_counter() - t0) * 1000), exc
 
-    try:
-        company_data, news_data = await asyncio.gather(
-            company_task,
-            news_task,
-            return_exceptions=True,
-        )
-    except Exception as e:
-        logger.error(f"Critical error in data fetching: {e}")
-        raise
+    (company_data, company_ms, company_err), (news_data, news_ms, news_err) = await asyncio.gather(
+        _timed(fetch_company_fundamentals(normalized_tickers)),
+        _timed(fetch_news(symbols=normalized_tickers, limit=5)),
+    )
 
     # Handle partial failures gracefully
-    if isinstance(company_data, Exception):
-        logger.error(f"Company data fetch failed: {company_data}")
+    if company_err is not None or not isinstance(company_data, list):
+        logger.error(f"Company data fetch failed: {company_err}")
         company_data = []
+    if news_err is not None or not isinstance(news_data, list):
+        logger.warning(f"News data fetch failed: {news_err}")
+        news_data = []
 
-    fetch_duration_ms = int((time.perf_counter() - fetch_start) * 1000)
+    mock_mode = get_settings().USE_MOCK_DATA
+    data_source = "fixture lokal (mock)" if mock_mode else "Sectors API v2 (live, bisa dari cache)"
     tool_steps = [
         {
             "tool": "sectors_fundamentals",
             "category": "DATA_RETRIEVAL",
-            "duration_ms": fetch_duration_ms,
+            "duration_ms": company_ms,
             "status": "SUCCESS" if company_data else "FALLBACK",
-            "summary": f"Mengambil data neraca & valuasi untuk {len(company_data) if isinstance(company_data, list) else 0} emiten dari Sectors API v2",
+            "summary": f"Mengambil data fundamental {len(company_data)} emiten dari {data_source}",
         },
         {
             "tool": "market_intelligence_news",
             "category": "DATA_RETRIEVAL",
-            "duration_ms": max(1, int(fetch_duration_ms * 0.7)),
+            "duration_ms": news_ms,
             "status": "SUCCESS" if news_data else "FALLBACK",
-            "summary": f"Mengumpulkan {len(news_data) if isinstance(news_data, list) else 0} artikel berita pasar modal untuk analisis sentimen",
+            "summary": f"Mengumpulkan {len(news_data)} artikel berita untuk analisis sentimen",
         },
     ]
 
@@ -241,8 +251,11 @@ async def analyze(
         if not symbol:
             continue
 
+        company_infos[symbol] = extract_company_info(company)
         metrics = extract_metrics(company)
-        score_result = calculate_health_score(metrics)
+        score_result = calculate_health_score(
+            metrics, sector=company_infos[symbol].get("sector")
+        )
 
         health_scores[symbol] = {
             "score": score_result.score,
@@ -250,9 +263,8 @@ async def analyze(
             "metrics_evaluated": score_result.metrics_evaluated,
             "metrics_coverage": score_result.metrics_coverage,
             "breakdown": score_result.breakdown,
+            "notes": score_result.notes,
         }
-
-        company_infos[symbol] = extract_company_info(company)
 
     # Handle tickers not found in API response
     for ticker in normalized_tickers:
@@ -367,7 +379,12 @@ async def analyze(
 
     # --- Phase 4: LLM narrative synthesis ---
     scores_for_llm = {
-        sym: {"score": d["score"], "status": d["status"], "metrics": d["metrics_evaluated"]}
+        sym: {
+            "score": d["score"],
+            "status": d["status"],
+            "metrics": d["metrics_evaluated"],
+            "notes": d.get("notes", []),
+        }
         for sym, d in health_scores.items()
     }
 
@@ -391,12 +408,55 @@ async def analyze(
         session_history=session_history,
     )
     llm_duration_ms = max(1, int((time.perf_counter() - llm_start) * 1000))
+    llm_failed = narrative == _fallback_narrative()
     tool_steps.append({
         "tool": "llm_narrative_synthesizer",
         "category": "SYNTHESIS",
         "duration_ms": llm_duration_ms,
-        "status": "SUCCESS" if narrative != _fallback_narrative() else "FALLBACK",
-        "summary": "Mensintesis wawasan naratif ramah vokal & screen-reader berdasarkan data kuantitatif",
+        "status": "FALLBACK" if llm_failed else "SUCCESS",
+        "summary": (
+            "LLM tidak tersedia, memakai narasi deterministik"
+            if llm_failed
+            else f"Mensintesis narasi dengan model OpenRouter ({get_settings().OPENROUTER_MODEL} + fallback)"
+        ),
+    })
+
+    # --- Phase 4b: Guardrail konsistensi angka ---
+    guard_start = time.perf_counter()
+    ground_truth = {
+        "health_scores": health_scores,
+        "company_infos": company_infos,
+        "company_data": company_data,
+        "news": news_data,
+        "historical_trend": historical_trend,
+        "portfolio": portfolio_simulation,
+        "comparative": comparative_summary,
+    }
+    if llm_failed:
+        guard = {"passed": True, "checked": 0, "unverified": []}
+        narrative = build_deterministic_narrative(
+            health_scores, historical_trend, portfolio_simulation
+        )
+        guard_action = "LLM gagal; narasi deterministik dipakai"
+    else:
+        guard = verify_narrative(narrative, ground_truth)
+        if guard["passed"]:
+            guard_action = f"{guard['checked']} angka pada narasi cocok dengan data hitung"
+        else:
+            logger.warning(f"Guardrail menolak narasi LLM; angka tak terverifikasi: {guard['unverified']}")
+            narrative = build_deterministic_narrative(
+                health_scores, historical_trend, portfolio_simulation
+            )
+            guard_action = (
+                f"Narasi LLM DITOLAK: angka tidak terverifikasi {guard['unverified'][:5]}; "
+                "diganti narasi deterministik"
+            )
+    tool_steps.append({
+        "tool": "narrative_numeric_guardrail",
+        "category": "GUARDRAIL",
+        "duration_ms": max(1, int((time.perf_counter() - guard_start) * 1000)),
+        "status": "SUCCESS" if guard["passed"] else "FALLBACK",
+        "summary": guard_action,
     })
 
     # Record assistant turn
@@ -409,10 +469,16 @@ async def analyze(
         "session_id": session_id,
         "tools_executed": tool_steps,
         "guardrail_verification": {
-            "passed": True,
-            "rule": "Deterministic Financial Math Guardrail (0% Hallucination)",
-            "metrics_evaluated": len(health_scores),
+            "passed": guard["passed"],
+            "rule": (
+                "Konsistensi angka: setiap angka dalam narasi LLM dicocokkan dengan hasil hitung "
+                "deterministik. Tidak menjamin kebenaran opini kualitatif."
+            ),
+            "metrics_evaluated": guard["checked"],
+            "unverified": guard["unverified"],
         },
+        "data_source": "mock" if mock_mode else "live",
+        "measured": True,
         "total_duration_ms": total_duration_ms,
     }
 

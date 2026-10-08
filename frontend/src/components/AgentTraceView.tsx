@@ -106,18 +106,35 @@ export const AgentTraceView: React.FC<AgentTraceViewProps> = ({ trace }) => {
 
             <div className="p-3 rounded-xl bg-slate-950/60 border border-emerald-900/40 flex items-start space-x-3">
               <span className="text-lg">🛡️</span>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <p className="text-xs uppercase tracking-wider text-emerald-400 font-semibold">
-                    Guardrail Anti-Halusinasi
-                  </p>
-                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">
-                    VERIFIED
+              <div className="w-full">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center space-x-2">
+                    <p className="text-xs uppercase tracking-wider text-emerald-400 font-semibold">
+                      Guardrail Konsistensi Angka
+                    </p>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                        trace.guardrail_verification.passed
+                          ? "bg-emerald-500/20 text-emerald-300"
+                          : "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                      }`}
+                    >
+                      {trace.guardrail_verification.passed ? "PASSED" : "REJECTED & REPLACED"}
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300">
+                    {trace.data_source === "mock" ? "⚡ Data Mock (Simulasi)" : "🌐 Data Live Sectors API"}
+                    {trace.measured ? " • Durasi Diukur" : " • Durasi Ilustrasi"}
                   </span>
                 </div>
-                <p className="text-xs text-slate-300 mt-0.5">
+                <p className="text-xs text-slate-300 mt-1">
                   {trace.guardrail_verification.rule}
                 </p>
+                {trace.guardrail_verification.unverified && trace.guardrail_verification.unverified.length > 0 && (
+                  <p className="text-xs text-rose-300 mt-1 font-mono">
+                    ⚠️ Angka tidak cocok pada narasi awal: {trace.guardrail_verification.unverified.join(", ")} (narasi otomatis diganti narasi deterministik)
+                  </p>
+                )}
               </div>
             </div>
           </div>

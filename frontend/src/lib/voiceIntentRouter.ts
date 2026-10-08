@@ -26,6 +26,9 @@ export type VoiceIntentType =
   | "READ_METRIC"                 // Membacakan Metrik Spesifik (Utang/DER, Laba/ROE, Valuasi/PE, Skor)
   | "PLAY_SONIFICATION"           // Memutar Nada Musik / Frekuensi Grafik Tren
   | "REPLAY_SUMMARY"              // Mengulangi Pembacaan Narasi Ringkasan
+  | "ADJUST_SPEECH_SPEED"         // Perintah 'lebih pelan', 'lebih cepat', 'tempo normal'
+  | "CONFIRMATION_FALLBACK"       // Konfirmasi saat pendengaran ambigu ("maksud Anda BBCA?")
+  | "WATCHLIST_COMMAND"           // Tambah atau baca daftar pantauan via suara
   | "NAVIGATION_HOME"             // Kembali ke Beranda / Reset Dasbor
   | "HELP"                        // Panduan Fitur & Perintah Suara
   | "STOCK_QUERY";                // Pertanyaan Analisis Bebas
@@ -263,6 +266,18 @@ const CLUSTERS = {
     "skor", "nilai kesehatan", "kategori", "status",
     "sehat atau tidak", "berapa nilainya"
   ],
+  SPEED_SLOWER: [
+    "lebih pelan", "pelan pelan", "pelan-pelan", "lambat", "terlalu cepat", "kurangi kecepatan"
+  ],
+  SPEED_FASTER: [
+    "lebih cepat", "cepatkan", "terlalu pelan", "tambah kecepatan"
+  ],
+  SPEED_NORMAL: [
+    "tempo normal", "kecepatan normal", "reset kecepatan", "standar"
+  ],
+  WATCHLIST: [
+    "pantauan", "daftar pantauan", "watchlist", "saham pantauan", "simpan saham", "tambahkan ke pantauan"
+  ],
 };
 
 function matchesAnyCluster(text: string, keywords: string[]): boolean {
@@ -319,6 +334,50 @@ export function routeVoiceIntent(
       tickers: effectiveTickers,
       spokenResponse: "Kembali ke dasbor utama. Silakan sebutkan saham atau fitur yang ingin Anda tuju.",
       rationale: "Pengguna ingin kembali ke halaman dasbor / beranda.",
+    };
+  }
+
+  // 2b. ADJUST SPEECH SPEED
+  if (matchesAnyCluster(cleaned, CLUSTERS.SPEED_SLOWER)) {
+    return {
+      intent: "ADJUST_SPEECH_SPEED",
+      cleanedQuery: cleaned,
+      tickers: effectiveTickers,
+      spokenResponse: "Baik, tempo suara diperlambat.",
+      rationale: "Pengguna meminta asisten berbicara lebih pelan.",
+    };
+  }
+  if (matchesAnyCluster(cleaned, CLUSTERS.SPEED_FASTER)) {
+    return {
+      intent: "ADJUST_SPEECH_SPEED",
+      cleanedQuery: cleaned,
+      tickers: effectiveTickers,
+      spokenResponse: "Baik, tempo suara dipercepat.",
+      rationale: "Pengguna meminta asisten berbicara lebih cepat.",
+    };
+  }
+  if (matchesAnyCluster(cleaned, CLUSTERS.SPEED_NORMAL)) {
+    return {
+      intent: "ADJUST_SPEECH_SPEED",
+      cleanedQuery: cleaned,
+      tickers: effectiveTickers,
+      spokenResponse: "Tempo suara dikembalikan ke normal.",
+      rationale: "Pengguna meminta asisten kembali ke tempo standar.",
+    };
+  }
+
+  // 2c. WATCHLIST COMMANDS
+  if (matchesAnyCluster(cleaned, CLUSTERS.WATCHLIST)) {
+    const sym = effectiveTickers[0];
+    const isAdd = /tambah|masuk|simpan|taruh/i.test(cleaned);
+    return {
+      intent: "WATCHLIST_COMMAND",
+      cleanedQuery: cleaned,
+      tickers: effectiveTickers,
+      targetQuery: sym ? (isAdd ? `ADD:${sym}` : `SHOW:${sym}`) : "LIST",
+      rationale: sym
+        ? `Perintah daftar pantauan untuk saham ${sym}.`
+        : "Pengguna menanyakan daftar saham pantauan.",
     };
   }
 
@@ -482,7 +541,37 @@ export function routeVoiceIntent(
     };
   }
 
-  // 12. FALLBACK / FREE-FORM STOCK QUESTION
+  // 12. AMBIGUOUS SPEECH DETECTION (Konfirmasi salah dengar)
+  // Speech recognition bahasa Indonesia sering salah dengar huruf konsonan mirip.
+  const SOUND_ALIKES: Record<string, string> = {
+    bebeca: "BBCA",
+    bebece: "BBCA",
+    bca: "BBCA",
+    beberi: "BBRI",
+    bebere: "BBRI",
+    bri: "BBRI",
+    bemeri: "BMRI",
+    mandiri: "BMRI",
+    telkom: "TLKM",
+    telkum: "TLKM",
+    indosat: "ISAT",
+    adaru: "ADRO",
+    adaro: "ADRO",
+  };
+  for (const [misheard, actualTicker] of Object.entries(SOUND_ALIKES)) {
+    if (cleaned.includes(misheard) && !effectiveTickers.includes(actualTicker)) {
+      return {
+        intent: "CONFIRMATION_FALLBACK",
+        cleanedQuery: cleaned,
+        tickers: [actualTicker],
+        targetQuery: `analisis fundamental ${actualTicker}`,
+        spokenResponse: `Maksud Anda saham ${actualTicker}, benar? Jika ya, katakan 'Ya ${actualTicker}' atau sebutkan kembali.`,
+        rationale: `Pendengaran ambigu terdeteksi mirip '${misheard}'. Minta konfirmasi untuk ${actualTicker}.`,
+      };
+    }
+  }
+
+  // 13. FALLBACK / FREE-FORM STOCK QUESTION
   return {
     intent: "STOCK_QUERY",
     cleanedQuery: cleaned,
